@@ -1,0 +1,316 @@
+"use client"
+
+import { useLocation, useNavigate } from "react-router-dom";
+import { useState } from "react"
+import {
+  ShoppingCart,
+  BadgeDollarSign,
+  Users,
+  Tag,
+  Archive,
+  Warehouse,
+  UserCircle,
+  BarChart3,
+  FileText,
+  User,
+  RotateCcw,
+  UserCog,
+  DollarSign,
+  Package,
+  ClipboardList,
+  ReceiptText,
+  History,
+  PackagePlus,
+  Wrench,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+import { useStore } from "@/components/store-context"
+import { AuthModal } from "@/components/auth-modal"
+import type { Employee } from "@/components/store-context"
+import { NOMBRECONFI } from "@/nombreconfi"
+import { AppLogo } from "@/components/app-logo"
+import { tenantCanAccessMenuItem } from "@/lib/tenant-permissions"
+import { useSidebar } from "@/lib/sidebar-context"
+
+export const MENU_ITEMS = [
+  {
+    id: "sales",
+    label: "Ventas y Facturación",
+    icon: ShoppingCart,
+    to: "/ventas",
+    subtitle: "Gestiona tus ventas y facturas.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "sales" as keyof Employee["permissions"],
+  },
+  {
+    id: "wholesale-sales",
+    label: "Ventas por Mayor",
+    icon: BadgeDollarSign,
+    to: "/ventas-por-mayor",
+    subtitle: "Gestiona ventas al por mayor con precios de volumen.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "wholesaleSales" as keyof Employee["permissions"],
+  },
+  {
+    id: "invoice-history",
+    label: "Historial de Facturas",
+    icon: FileText,
+    to: "/historial-facturas",
+    subtitle: "Ver todas las facturas emitidas.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "invoiceHistory" as keyof Employee["permissions"],
+  },
+  {
+    id: "returns",
+    label: "Devoluciones",
+    icon: RotateCcw,
+    to: "/devoluciones",
+    subtitle: "Gestiona devoluciones de productos.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "returns" as keyof Employee["permissions"],
+  },
+  {
+    id: "repairs",
+    label: "Reparaciones / Taller",
+    icon: Wrench,
+    to: "/reparaciones",
+    subtitle: "Recepción de equipos, diagnóstico, presupuesto y facturación.",
+    actionLabel: "Registrar Recepción",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "repairs" as keyof Employee["permissions"],
+  },
+  {
+    id: "exclusive-queue",
+    label: "Cola Exclusiva",
+    icon: ClipboardList,
+    to: "/cola-exclusiva",
+    subtitle: "Guarda pre-facturas pendientes de cobro.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "queueExclusive" as keyof Employee["permissions"],
+  },
+  {
+    id: "products",
+    label: "Productos",
+    icon: Tag,
+    to: "/productos",
+    subtitle: "Gestiona el inventario completo: teléfonos, accesorios y repuestos.",
+    actionLabel: "Nuevo Producto",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "products" as keyof Employee["permissions"],
+  },
+  {
+    id: "added-products",
+    label: "Productos Añadidos",
+    icon: PackagePlus,
+    to: "/productos-anadidos",
+    subtitle: "Consulta los productos añadidos manualmente en ventas.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "addedProducts" as keyof Employee["permissions"],
+  },
+  {
+    id: "warehouse",
+    label: "Almacen",
+    icon: Archive,
+    to: "/almacen",
+    subtitle: "Organiza las cajas del almacen y los componentes guardados en cada una.",
+    actionLabel: "Agregar Producto",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "almacen" as keyof Employee["permissions"],
+  },
+  {
+    id: "warehouse-invoice-history",
+    label: "Historial Almacen",
+    icon: FileText,
+    to: "/historial-facturas-almacen",
+    subtitle: "Ver solo facturas de productos de almacen.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "almacenInvoiceHistory" as keyof Employee["permissions"],
+  },
+
+  {
+    id: "customers",
+    label: "Clientes",
+    icon: UserCircle,
+    to: "/clientes",
+    subtitle: "Gestión de clientes y créditos.",
+    actionLabel: "Nuevo Cliente",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "customers" as keyof Employee["permissions"],
+  },
+  {
+    id: "almacen-customers",
+    label: "Cliente Almacen",
+    icon: Warehouse,
+    to: "/cliente-almacen",
+    subtitle: "Cuentas de credito exclusivas para productos de almacen.",
+    actionLabel: "Nuevo Cliente",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "clienteAlmacen" as keyof Employee["permissions"],
+  },
+  {
+    id: "suppliers",
+    label: "Proveedores",
+    icon: Users,
+    to: "/proveedores",
+    subtitle: "Directorio de proveedores de equipos y repuestos.",
+    actionLabel: "Nuevo Proveedor",
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "suppliers" as keyof Employee["permissions"],
+  },
+  {
+    id: "supplier-invoices",
+    label: "Facturas de Proveedores",
+    icon: ReceiptText,
+    to: "/facturas-proveedores",
+    subtitle: "Registra compras, facturas a crédito y abonos a proveedores.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "supplierInvoices" as keyof Employee["permissions"],
+  },
+  {
+    id: "employees",
+    label: "Empleados",
+    icon: UserCog,
+    to: "/empleados",
+    subtitle: "Gestión de empleados y permisos.",
+    actionLabel: "Nuevo Empleado",
+    allowedRoles: ["admin"] as const,
+    permissionKey: "employees" as keyof Employee["permissions"],
+  },
+  {
+    id: "reports",
+    label: "Reportes",
+    icon: BarChart3,
+    to: "/reportes",
+    subtitle: "Ver ganancias y estadísticas.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "reports" as keyof Employee["permissions"],
+  },
+  {
+    id: "cash-closing",
+    label: "Cierre de Caja",
+    icon: DollarSign,
+    to: "/cierre-de-caja",
+    subtitle: "Cerrar caja y ver arqueos.",
+    actionLabel: null,
+    allowedRoles: ["admin"] as const,
+    permissionKey: "cashClosing" as keyof Employee["permissions"],
+  },
+  {
+    id: "warehouse-closing",
+    label: "Cierre de Almacen",
+    icon: Archive,
+    to: "/cierre-de-almacen",
+    subtitle: "Cierre diario del inventario de almacen.",
+    actionLabel: null,
+    allowedRoles: ["admin", "employee"] as const,
+    permissionKey: "almacenClosing" as keyof Employee["permissions"],
+  },
+]
+
+interface SidebarProps {
+  className?: string
+  onItemClick?: () => void
+}
+
+export function Sidebar({ className, onItemClick }: SidebarProps) {
+  const location = useLocation();
+  const pathname = location.pathname;
+  const [showAuthModal, setShowAuthModal] = useState(false)
+  const { currentUser, login, employees } = useStore()
+  const { collapsed, toggleCollapsed } = useSidebar()
+
+  const navigate = useNavigate()
+
+  const handleLogin = async (role: "admin" | "employee", password: string) => {
+    const email = role === "admin" ? "admin@doblete.com" : "empleado@doblete.com"
+    const result = await login(email, password)
+    return result.success
+  }
+
+  const handleLogout = () => {
+    window.dispatchEvent(new CustomEvent("request-turn-logout"))
+    // TurnSessionGate registra el cierre y luego ejecuta logout.
+    // Si no hay turno activo, el evento también cierra la sesión inmediatamente.
+  }
+
+  const filteredMenuItems = MENU_ITEMS.filter((item) => tenantCanAccessMenuItem(currentUser, employees, item))
+
+  return (
+    <div className={cn("flex h-full flex-col gap-4 overflow-x-hidden overflow-y-auto py-4 pb-4", className)}>
+      <button
+        onClick={toggleCollapsed}
+        className={cn(
+          "flex items-center transition-opacity hover:opacity-80",
+          collapsed ? "w-full justify-center" : "gap-2 px-3 py-2 md:px-6"
+        )}
+      >
+        <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg border border-[#fbbf24]/30 bg-[#1e293b]">
+          <AppLogo className="h-8 w-8" />
+        </div>
+        {!collapsed && <span className="truncate text-left text-lg font-bold text-[#f1f5f9]">{NOMBRECONFI.appName}</span>}
+      </button>
+      <nav className="flex flex-col gap-1 px-2">
+        {filteredMenuItems.map((item) => {
+          const isActive = pathname === item.to
+          return (
+            <Button
+              key={item.id}
+              type="button"
+              variant="ghost"
+              title={collapsed ? item.label : undefined}
+              onClick={() => { navigate(item.to); onItemClick?.() }}
+              className={cn(
+                "w-full min-w-0",
+                collapsed ? "justify-center" : "justify-start gap-2",
+                isActive
+                  ? "bg-[#fbbf24] text-[#1e293b] hover:bg-[#fbbf24]/90"
+                  : "text-[#f1f5f9] hover:bg-[#f1f5f9]/10 hover:text-[#f1f5f9]",
+              )}
+            >
+              <item.icon className="h-4 w-4 shrink-0" />
+              {!collapsed && <span className="truncate text-left">{item.label}</span>}
+            </Button>
+          )
+        })}
+      </nav>
+
+      <div className="px-2 mt-auto border-t border-[#334155] pt-4">
+        <Button
+          variant="ghost"
+          onClick={() => setShowAuthModal(true)}
+          title={collapsed && currentUser ? currentUser.name : undefined}
+          className={cn(
+            "w-full min-w-0",
+            collapsed ? "justify-center" : "justify-start gap-2",
+            currentUser
+              ? currentUser.role === "admin"
+                ? "text-amber-500 hover:bg-amber-500/10"
+                : "text-blue-500 hover:bg-blue-500/10"
+              : "text-[#f1f5f9] hover:bg-[#f1f5f9]/10",
+          )}
+        >
+          <User className="h-4 w-4 shrink-0" />
+          {!collapsed && <span className="truncate text-left">{currentUser ? currentUser.name : "Iniciar Sesión"}</span>}
+        </Button>
+      </div>
+
+      <AuthModal
+        open={showAuthModal}
+        onOpenChange={setShowAuthModal}
+        onLogin={handleLogin}
+        currentUser={currentUser}
+        onLogout={handleLogout}
+      />
+    </div>
+  )
+}

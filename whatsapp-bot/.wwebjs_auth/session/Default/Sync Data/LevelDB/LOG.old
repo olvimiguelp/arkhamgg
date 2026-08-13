@@ -1,0 +1,4 @@
+2026/08/02-21:14:17.993 34bc Creating DB C:\Users\o\Desktop\arkham\whatsapp-bot\.wwebjs_auth\session\Default\Sync Data\LevelDB since it was missing.
+2026/08/02-21:14:18.026 34bc Reusing MANIFEST C:\Users\o\Desktop\arkham\whatsapp-bot\.wwebjs_auth\session\Default\Sync Data\LevelDB/MANIFEST-000001
+2026/08/02-21:14:18.026 34bc Recovering log #3
+2026/08/02-21:14:18.026 34bc Reusing old log C:\Users\o\Desktop\arkham\whatsapp-bot\.wwebjs_auth\session\Default\Sync Data\LevelDB/000003.log 

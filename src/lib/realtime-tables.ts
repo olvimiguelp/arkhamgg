@@ -1,0 +1,31 @@
+/** Tablas de negocio con Realtime habilitado (ver 040-enable-realtime-all-tables.sql). */
+export const REALTIME_APP_TABLES = [
+  "employees",
+  "sales",
+  "returns",
+  "payments",
+  "payment_allocations",
+  "products",
+  "repairs",
+  "customers",
+  "suppliers",
+  "system_config",
+  "purchases",
+  "supplier_payments",
+  "cash_closings",
+  "expenses",
+  "detalle_costos_ventas",
+  "armacen",
+  "almacen_closings",
+  "almacen_customer_accounts",
+  "almacen_credit_sales",
+  "almacen_payments",
+  "saas_businesses",
+  "subscription_plans",
+  "admin_subscription_messages",
+  "tenant_subscription_notifications",
+  "client_invoices",
+  "system_messages",
+] as const
+
+export type RealtimeAppTable = (typeof REALTIME_APP_TABLES)[number]
