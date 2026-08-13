@@ -18,6 +18,8 @@ import {
   FileDown,
   Loader2,
   ReceiptText,
+  Share2,
+  Copy,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -49,6 +51,7 @@ import { normalizeAlmacenBoxNumber } from "@/lib/almacen"
 import { normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
 import { uploadProductImageToStorage } from "@/lib/product-image-storage"
 import { getTenantBranding } from "@/lib/tenant-branding"
+import { createClient } from "@/lib/supabase/client"
 
 // Reusing the Product interface and Store logic since it's the same data source
 // In a real app, this might be a distinct view or filter of the inventory
@@ -87,6 +90,9 @@ export default function ProductsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [isCatalogDialogOpen, setIsCatalogDialogOpen] = useState(false)
+  const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
+  const [publicCatalogLink, setPublicCatalogLink] = useState("")
+  const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
   const [isInventoryDialogOpen, setIsInventoryDialogOpen] = useState(false)
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false)
   const [pdfReportType, setPdfReportType] = useState<"low" | "stop" | "total">("low")
@@ -132,6 +138,28 @@ export default function ProductsPage() {
   const lowStockCount = catalogProducts.filter((product) => product.stock <= (product.minStock || 0)).length
   const totalCost = catalogProducts.reduce((acc, product) => acc + product.buyPrice * product.stock, 0)
   const totalValue = catalogProducts.reduce((acc, product) => acc + product.sellPrice * product.stock, 0)
+
+  const createPublicCatalogLink = async () => {
+    const ownerAdminId = String(currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "").trim()
+    if (!ownerAdminId) return
+    setIsCreatingPublicCatalog(true)
+    try {
+      const token = crypto.randomUUID().replaceAll("-", "")
+      const { error } = await createClient().from("catalog_shares").insert({
+        token,
+        owner_admin_id: ownerAdminId,
+        product_ids: catalogProducts.filter((product) => product.stock > 0).map((product) => product.id),
+        business_name: tenantBusinessName,
+      })
+      if (error) throw error
+      const link = `${window.location.origin}/catalogo-publico/?token=${token}`
+      setPublicCatalogLink(link)
+      setIsPublicCatalogDialogOpen(true)
+    } catch (error) {
+      console.error("Error creating public catalog link:", error)
+      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
+    } finally { setIsCreatingPublicCatalog(false) }
+  }
 
   const [formData, setFormData] = useState({
     sku: "",
@@ -1065,6 +1093,10 @@ export default function ProductsPage() {
           <PackagePlus className="mr-2 h-4 w-4" />
           Catálogo
         </Button>
+        <Button variant="outline" onClick={() => void createPublicCatalogLink()} disabled={isCreatingPublicCatalog} className="w-full min-h-11 sm:w-auto">
+          {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+          Compartir catálogo
+        </Button>
         <Button variant="outline" onClick={() => setIsCategoryDialogOpen(true)} className="w-full min-h-11 sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           Categorías
@@ -1305,6 +1337,15 @@ export default function ProductsPage() {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
+        <DialogContent className="w-[95vw] max-w-[520px]">
+          <DialogHeader><DialogTitle>Catálogo público listo</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Comparte este enlace con tu cliente. No necesita iniciar sesión. Sus selecciones llegarán a Cola Exclusiva.</p>
+          <div className="flex gap-2"><Input readOnly value={publicCatalogLink} /><Button size="icon" onClick={() => { void navigator.clipboard.writeText(publicCatalogLink); toast({ title: "Enlace copiado" }) }}><Copy className="h-4 w-4" /></Button></div>
+          <DialogFooter><Button onClick={() => window.open(publicCatalogLink, "_blank", "noopener,noreferrer")}>Abrir catálogo</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

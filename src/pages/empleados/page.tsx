@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useStore, type Employee } from "@/components/store-context"
+import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -49,6 +50,9 @@ import {
   EyeOff,
   MessageCircle,
   BarChart3,
+  Share2,
+  Copy,
+  Loader2,
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
 
@@ -186,7 +190,7 @@ const ADMIN_EMPLOYEE_PERMISSIONS: Employee["permissions"] = {
 
 export default function EmpleadosPage() {
   const navigate = useNavigate()
-  const { employees, addEmployee, updateEmployee, deleteEmployee, currentUser, canCurrentUserPerform } = useStore()
+  const { employees, products, addEmployee, updateEmployee, deleteEmployee, currentUser, canCurrentUserPerform } = useStore()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all")
@@ -196,6 +200,9 @@ export default function EmpleadosPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [showPassword, setShowPassword] = useState(false)
+  const [publicCatalogLink, setPublicCatalogLink] = useState("")
+  const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
+  const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
 
   const { config: systemConfig, loading: systemConfigLoading } = useSystemConfig({
     keys: ["whatsapp_support_link", "whatsapp_support_access"],
@@ -223,6 +230,30 @@ export default function EmpleadosPage() {
     const activeAdmins = employees.filter((employee) => employee.role === "admin" && employee.status === "active")
     return activeAdmins[0] ?? employees.find((employee) => employee.role === "admin") ?? null
   }, [employees])
+
+  const createPublicCatalogLink = async () => {
+    const ownerAdminId = String(currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "").trim()
+    if (!ownerAdminId) return
+    setIsCreatingPublicCatalog(true)
+    try {
+      const token = crypto.randomUUID().replaceAll("-", "")
+      const catalogProducts = products.filter((product) => product.stock > 0 && !product.boxNumber)
+      const { error } = await createClient().from("catalog_shares").insert({
+        token,
+        owner_admin_id: ownerAdminId,
+        product_ids: catalogProducts.map((product) => product.id),
+        business_name: adminContact?.name || "Catálogo de productos",
+      })
+      if (error) throw error
+      setPublicCatalogLink(`${window.location.origin}/catalogo-publico/?token=${token}`)
+      setIsPublicCatalogDialogOpen(true)
+    } catch (error) {
+      console.error("Error creating public catalog link:", error)
+      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
+    } finally {
+      setIsCreatingPublicCatalog(false)
+    }
+  }
 
   const [formData, setFormData] = useState({
     name: "",
@@ -611,6 +642,11 @@ export default function EmpleadosPage() {
               <CardTitle>Empleados</CardTitle>
               <CardDescription>Lista de todos los empleados registrados</CardDescription>
             </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => void createPublicCatalogLink()} disabled={isCreatingPublicCatalog} className="min-h-11">
+              {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+              Compartir catálogo
+            </Button>
             {canAddEmployees && <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
                 <Button onClick={resetForm} className="hidden min-h-11 sm:inline-flex">
@@ -792,6 +828,7 @@ export default function EmpleadosPage() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -1046,6 +1083,20 @@ export default function EmpleadosPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
+        <DialogContent className="w-[95vw] max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Catálogo público listo</DialogTitle>
+            <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva.</DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-2">
+            <Input readOnly value={publicCatalogLink} />
+            <Button size="icon" onClick={() => { void navigator.clipboard.writeText(publicCatalogLink); toast({ title: "Enlace copiado" }) }}><Copy className="h-4 w-4" /></Button>
+          </div>
+          <DialogFooter><Button onClick={() => window.open(publicCatalogLink, "_blank", "noopener,noreferrer")}>Abrir catálogo</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog de Edición */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
