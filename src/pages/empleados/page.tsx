@@ -238,10 +238,13 @@ export default function EmpleadosPage() {
     try {
       const token = crypto.randomUUID().replaceAll("-", "")
       const catalogProducts = products.filter((product) => product.stock > 0 && !product.boxNumber)
+      const productIds = catalogProducts
+        .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
+        .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
       const { error } = await createClient().from("catalog_shares").insert({
         token,
         owner_admin_id: ownerAdminId,
-        product_ids: catalogProducts.map((product) => product.id),
+        product_ids: productIds,
         business_name: adminContact?.name || "Catálogo de productos",
       })
       if (error) throw error
