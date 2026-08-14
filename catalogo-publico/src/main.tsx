@@ -31,6 +31,7 @@ function CatalogoPublico() {
   const [message, setMessage] = useState("")
   const [done, setDone] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [cartOpen, setCartOpen] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -150,10 +151,14 @@ function CatalogoPublico() {
         ) : <div className="empty-card"><span>⌁</span><h3>No hay productos disponibles</h3><p>Este catálogo no tiene productos con stock en este momento.</p></div>}
       </main>
 
-      <aside className={`cart-panel ${cart.length ? "has-items" : "empty-cart"}`}>
-        <div className="cart-header"><div><p className="eyebrow">CARRITO DE COMPRA</p><h2>{cart.length ? "Productos seleccionados" : "Tu carrito está vacío"}</h2></div><span className="cart-badge">{itemCount}</span></div>
+      <button className="cart-fab" onClick={() => setCartOpen(true)} aria-label="Abrir carrito de compra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L20.5 8H6" /><path d="M9 20h.01M17 20h.01" /></svg>{itemCount > 0 && <span className="fab-count">{itemCount}</span>}</button>
+
+      {cartOpen && <div className="cart-backdrop" onClick={() => setCartOpen(false)}>
+        <aside className={`cart-panel ${cart.length ? "has-items" : "empty-cart"}`} onClick={(event) => event.stopPropagation()}>
+        <div className="cart-header"><div><p className="eyebrow">CARRITO DE COMPRA</p><h2>{cart.length ? "Productos seleccionados" : "Tu carrito está vacío"}</h2></div><div className="cart-header-actions"><span className="cart-badge">{itemCount}</span><button className="cart-close" onClick={() => setCartOpen(false)} aria-label="Cerrar carrito">×</button></div></div>
         {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div><div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>{message && <p className="error-message">{message}</p>}</> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
-      </aside>
+        </aside>
+      </div>}
 
       {selectedProduct && <div className="product-modal-backdrop" role="presentation" onClick={() => setSelectedProduct(null)}>
         <div className="product-modal" role="dialog" aria-modal="true" aria-label={selectedProduct.name} onClick={(event) => event.stopPropagation()}>
