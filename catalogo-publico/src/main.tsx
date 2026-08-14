@@ -10,6 +10,7 @@ type Product = {
   category: string
   stock: number
   sell_price: number
+  wholesale_price: number
   image_url?: string
 }
 
@@ -38,7 +39,7 @@ function CatalogoPublico() {
     void (async () => {
       const { data: share } = await supabase
         .from("catalog_shares")
-        .select("owner_admin_id, product_ids, business_name, active, expires_at")
+        .select("owner_admin_id, product_ids, business_name, price_mode, active, expires_at")
         .eq("token", token)
         .maybeSingle()
 
@@ -49,15 +50,17 @@ function CatalogoPublico() {
       }
 
       setBusiness(share.business_name || "Catálogo de productos")
+      const isWholesale = share.price_mode === "wholesale"
       const { data } = await supabase
         .from("products")
-        .select("id, sku, name, category, stock, sell_price, image_url")
+        .select("id, sku, name, category, stock, sell_price, wholesale_price, image_url")
         .eq("owner_admin_id", share.owner_admin_id)
         .in("id", share.product_ids || [])
         .gt("stock", 0)
+        .gt(isWholesale ? "wholesale_price" : "sell_price", 0)
         .order("name")
 
-      setProducts(data || [])
+      setProducts((data || []).map((product) => isWholesale ? { ...product, sell_price: product.wholesale_price } : product))
       setLoading(false)
     })()
   }, [supabase, token])

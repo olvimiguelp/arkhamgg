@@ -201,6 +201,7 @@ export default function EmpleadosPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [publicCatalogLink, setPublicCatalogLink] = useState("")
+  const [publicCatalogType, setPublicCatalogType] = useState<"normal" | "wholesale">("normal")
   const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
   const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
 
@@ -231,13 +232,16 @@ export default function EmpleadosPage() {
     return activeAdmins[0] ?? employees.find((employee) => employee.role === "admin") ?? null
   }, [employees])
 
-  const createPublicCatalogLink = async () => {
+  const createPublicCatalogLink = async (priceMode: "normal" | "wholesale") => {
     const ownerAdminId = String(currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "").trim()
     if (!ownerAdminId) return
     setIsCreatingPublicCatalog(true)
     try {
       const token = crypto.randomUUID().replaceAll("-", "")
-      const catalogProducts = products.filter((product) => product.stock > 0 && !product.boxNumber)
+      const catalogProducts = products.filter((product) => {
+        if (product.stock <= 0 || product.boxNumber) return false
+        return priceMode === "normal" || Number(product.wholesalePrice) > 0
+      })
       const productIds = catalogProducts
         .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
@@ -245,9 +249,11 @@ export default function EmpleadosPage() {
         token,
         owner_admin_id: ownerAdminId,
         product_ids: productIds,
+        price_mode: priceMode,
         business_name: adminContact?.name || "Catálogo de productos",
       })
       if (error) throw error
+      setPublicCatalogType(priceMode)
       setPublicCatalogLink(`${window.location.origin}/catalogo-publico/?token=${token}`)
       setIsPublicCatalogDialogOpen(true)
     } catch (error) {
@@ -646,9 +652,13 @@ export default function EmpleadosPage() {
               <CardDescription>Lista de todos los empleados registrados</CardDescription>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-            <Button variant="outline" onClick={() => void createPublicCatalogLink()} disabled={isCreatingPublicCatalog} className="min-h-11">
+            <Button variant="outline" onClick={() => void createPublicCatalogLink("normal")} disabled={isCreatingPublicCatalog} className="min-h-11">
               {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
               Compartir catálogo
+            </Button>
+            <Button variant="outline" onClick={() => void createPublicCatalogLink("wholesale")} disabled={isCreatingPublicCatalog} className="min-h-11">
+              {isCreatingPublicCatalog && publicCatalogType === "wholesale" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+              Catálogo por mayor
             </Button>
             {canAddEmployees && <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
@@ -1090,14 +1100,14 @@ export default function EmpleadosPage() {
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
         <DialogContent className="w-[95vw] max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>Catálogo público listo</DialogTitle>
+            <DialogTitle>{publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
             <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva.</DialogDescription>
           </DialogHeader>
           <div className="flex gap-2">
             <Input readOnly value={publicCatalogLink} />
             <Button size="icon" onClick={() => { void navigator.clipboard.writeText(publicCatalogLink); toast({ title: "Enlace copiado" }) }}><Copy className="h-4 w-4" /></Button>
           </div>
-          <DialogFooter><Button onClick={() => window.open(publicCatalogLink, "_blank", "noopener,noreferrer")}>Abrir catálogo</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => window.open(publicCatalogLink, "_blank", "noopener,noreferrer")}>{publicCatalogType === "wholesale" ? "Abrir catálogo por mayor" : "Abrir catálogo normal"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
