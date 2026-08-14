@@ -33,6 +33,7 @@ import {
   printRepairStickerDirect,
 } from "@/components/reparaciones/repair-print-templates"
 import { useToast } from "@/hooks/use-toast"
+import { useRealtimeTableRefresh } from "@/hooks/use-realtime-table-refresh"
 import { getPhoneForRepair, formatDeviceName } from "@/lib/repair-utils"
 import { sendWhatsappBotMessage } from "@/lib/whatsapp-bot"
 import { getTenantBranding } from "@/lib/tenant-branding"
@@ -162,6 +163,12 @@ export default function ReparacionesPage() {
         )
       })
   }, [location.search, repairs])
+
+  // Realtime refresh for repairs table
+  useRealtimeTableRefresh("repairs", () => {
+    // This hook ensures the page refreshes when repairs change in realtime
+    // The state will be updated from the store context automatically
+  })
 
   const handleEdit = (repair: Repair) => {
     if (!canEditRepairs || repair.status === "entregado") return

@@ -245,12 +245,18 @@ export default function EmpleadosPage() {
       const productIds = catalogProducts
         .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
+      
+      // Create expiration time: 1 hour from now
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      
       const { error } = await createClient().from("catalog_shares").insert({
         token,
         owner_admin_id: ownerAdminId,
         product_ids: productIds,
         price_mode: priceMode,
         business_name: adminContact?.name || "Catálogo de productos",
+        expires_at: expiresAt,
+        active: true,
       })
       if (error) throw error
       setPublicCatalogType(priceMode)
@@ -1097,7 +1103,7 @@ export default function EmpleadosPage() {
         <DialogContent className="w-[95vw] max-w-[520px]">
           <DialogHeader>
             <DialogTitle>{publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
-            <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva.</DialogDescription>
+            <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva. ⏱️ Este enlace expirará en 1 hora por seguridad.</DialogDescription>
           </DialogHeader>
           <div className="flex gap-2">
             <Input readOnly value={publicCatalogLink} />

@@ -2026,6 +2026,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
               if (!isRecordVisibleToCurrentTenant(rec)) return
               setRepairs((prev) => prev.filter((r) => r.id !== rec.id))
             }
+            broadcastRealtimeTableChange("repairs", payload)
           },
         )
         .subscribe()
