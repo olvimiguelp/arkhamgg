@@ -30,6 +30,7 @@ function CatalogoPublico() {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState("")
   const [done, setDone] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -133,7 +134,7 @@ function CatalogoPublico() {
           <section className="product-grid">
             {products.map((product) => {
               const inCart = cart.find((item) => item.id === product.id)?.quantity || 0
-              return <article className="product-card" key={product.id}>
+              return <article className="product-card" key={product.id} onClick={() => setSelectedProduct(product)}>
                 <div className="product-image-wrap">
                   {product.image_url ? <img src={product.image_url} alt={product.name} /> : <div className="image-placeholder"><span>✦</span></div>}
                   {product.category && <span className="category-badge">{product.category}</span>}
@@ -141,7 +142,7 @@ function CatalogoPublico() {
                 <div className="product-info">
                   <h3>{product.name}</h3>
                   <p className="stock-label"><span className="stock-dot" /> {product.stock} disponibles</p>
-                  <div className="product-footer"><div><span className="price-label">Precio</span><strong>RD$ {money(Number(product.sell_price))}</strong></div><button className="add-button" onClick={() => add(product)}>{inCart ? `Añadir más · ${inCart}` : "Añadir"}<span>＋</span></button></div>
+                  <div className="product-footer"><div><span className="price-label">Precio</span><strong>RD$ {money(Number(product.sell_price))}</strong></div><button className="add-button" onClick={(event) => { event.stopPropagation(); add(product) }}>{inCart ? `Añadir más · ${inCart}` : "Añadir"}<span>＋</span></button></div>
                 </div>
               </article>
             })}
@@ -149,13 +150,18 @@ function CatalogoPublico() {
         ) : <div className="empty-card"><span>⌁</span><h3>No hay productos disponibles</h3><p>Este catálogo no tiene productos con stock en este momento.</p></div>}
       </main>
 
-      {cart.length > 0 && <aside className="cart-panel">
-        <div className="cart-header"><div><p className="eyebrow">TU SELECCIÓN</p><h2>Resumen del pedido</h2></div><span className="cart-badge">{itemCount}</span></div>
-        <div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div>
-        <div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div>
-        <div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>
-        {message && <p className="error-message">{message}</p>}
-      </aside>}
+      <aside className={`cart-panel ${cart.length ? "has-items" : "empty-cart"}`}>
+        <div className="cart-header"><div><p className="eyebrow">CARRITO DE COMPRA</p><h2>{cart.length ? "Productos seleccionados" : "Tu carrito está vacío"}</h2></div><span className="cart-badge">{itemCount}</span></div>
+        {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div><div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>{message && <p className="error-message">{message}</p>}</> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
+      </aside>
+
+      {selectedProduct && <div className="product-modal-backdrop" role="presentation" onClick={() => setSelectedProduct(null)}>
+        <div className="product-modal" role="dialog" aria-modal="true" aria-label={selectedProduct.name} onClick={(event) => event.stopPropagation()}>
+          <button className="modal-close" onClick={() => setSelectedProduct(null)} aria-label="Cerrar">×</button>
+          <div className="modal-image">{selectedProduct.image_url ? <img src={selectedProduct.image_url} alt={selectedProduct.name} /> : <div className="image-placeholder"><span>✦</span></div>}</div>
+          <div className="modal-content">{selectedProduct.category && <span className="category-badge">{selectedProduct.category}</span>}<h2>{selectedProduct.name}</h2><p className="stock-label"><span className="stock-dot" /> {selectedProduct.stock} disponibles</p><strong className="modal-price">RD$ {money(Number(selectedProduct.sell_price))}</strong><button className="submit-button modal-add" onClick={() => { add(selectedProduct); setSelectedProduct(null) }}>Añadir al carrito <span>＋</span></button></div>
+        </div>
+      </div>}
     </div>
   )
 }
