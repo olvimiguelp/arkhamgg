@@ -12,6 +12,7 @@
     "build": "tsc && vite build",
     "dev:catalogo": "vite --config catalogo-publico/vite.config.ts --host 0.0.0.0 --port 3001",
     "build:catalogo": "tsc -p catalogo-publico/tsconfig.json && vite build --config catalogo-publico/vite.config.ts",
+    "build:vercel": "npm run build && npm run build:catalogo",
     "lint": "eslint .",
     "preview": "vite preview",
     "setup:storage": "node scripts/create-storage-buckets.js",

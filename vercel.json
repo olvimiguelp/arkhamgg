@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "npm run build:vercel",
+  "outputDirectory": "dist",
   "routes": [
     {
       "handle": "filesystem"
