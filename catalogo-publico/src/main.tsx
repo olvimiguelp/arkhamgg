@@ -33,7 +33,6 @@ function CatalogoPublico() {
   const [done, setDone] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
-  const [customerFormOpen, setCustomerFormOpen] = useState(false)
 
   useEffect(() => {
     void (async () => {
@@ -83,10 +82,6 @@ function CatalogoPublico() {
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
 
   const send = async () => {
-    if (!name.trim() || !phone.trim()) {
-      setMessage("Escribe tu nombre y número de teléfono para enviar el pedido.")
-      return
-    }
     setSending(true)
     setMessage("")
     const { error } = await supabase.rpc("submit_catalog_order", {
@@ -111,8 +106,6 @@ function CatalogoPublico() {
     else {
       setDone(true)
       setCart([])
-      setCustomerFormOpen(false)
-      setCartOpen(false)
     }
   }
 
@@ -166,17 +159,8 @@ function CatalogoPublico() {
       {cartOpen && <div className="cart-backdrop" onClick={() => setCartOpen(false)}>
         <aside className={`cart-panel ${cart.length ? "has-items" : "empty-cart"}`} onClick={(event) => event.stopPropagation()}>
         <div className="cart-header"><div><p className="eyebrow">CARRITO DE COMPRA</p><h2>{cart.length ? "Productos seleccionados" : "Tu carrito está vacío"}</h2></div><div className="cart-header-actions"><span className="cart-badge">{itemCount}</span><button className="cart-close" onClick={() => setCartOpen(false)} aria-label="Cerrar carrito">×</button></div></div>
-        {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div><button className="submit-button" disabled={sending} onClick={() => setCustomerFormOpen(true)}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button>{message && <p className="error-message">{message}</p>}</> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
+        {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div><div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>{message && <p className="error-message">{message}</p>}</> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
         </aside>
-      </div>}
-
-      {customerFormOpen && <div className="customer-modal-backdrop" role="presentation" onClick={() => !sending && setCustomerFormOpen(false)}>
-        <div className="customer-modal" role="dialog" aria-modal="true" aria-labelledby="customer-modal-title" onClick={(event) => event.stopPropagation()}>
-          <div className="customer-modal-header"><div><p className="eyebrow">DATOS DEL CLIENTE</p><h2 id="customer-modal-title">¿A dónde enviamos tu pedido?</h2><p>Necesitamos estos datos para que el empleado pueda procesarlo.</p></div><button className="cart-close" onClick={() => setCustomerFormOpen(false)} disabled={sending} aria-label="Cerrar formulario">×</button></div>
-          <div className="customer-form"><label>Nombre completo<input autoFocus required placeholder="Ej. Juan Pérez" value={name} onChange={(event) => setName(event.target.value)} /></label><label>Número de teléfono<input required type="tel" placeholder="Ej. 809 555 5555" value={phone} onChange={(event) => setPhone(event.target.value)} /></label></div>
-          <div className="customer-modal-actions"><button className="cancel-button" onClick={() => setCustomerFormOpen(false)} disabled={sending}>Cancelar</button><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando…" : "Confirmar y enviar"}<span>→</span></button></div>
-          {message && <p className="error-message">{message}</p>}
-        </div>
       </div>}
 
       {selectedProduct && <div className="product-modal-backdrop" role="presentation" onClick={() => setSelectedProduct(null)}>

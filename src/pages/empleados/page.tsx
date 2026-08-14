@@ -656,10 +656,6 @@ export default function EmpleadosPage() {
               {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
               Compartir catálogo
             </Button>
-            <Button variant="outline" onClick={() => void createPublicCatalogLink("wholesale")} disabled={isCreatingPublicCatalog} className="min-h-11">
-              {isCreatingPublicCatalog && publicCatalogType === "wholesale" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
-              Catálogo por mayor
-            </Button>
             {canAddEmployees && <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>
                 <Button onClick={resetForm} className="hidden min-h-11 sm:inline-flex">
@@ -1107,7 +1103,10 @@ export default function EmpleadosPage() {
             <Input readOnly value={publicCatalogLink} />
             <Button size="icon" onClick={() => { void navigator.clipboard.writeText(publicCatalogLink); toast({ title: "Enlace copiado" }) }}><Copy className="h-4 w-4" /></Button>
           </div>
-          <DialogFooter><Button onClick={() => window.open(publicCatalogLink, "_blank", "noopener,noreferrer")}>{publicCatalogType === "wholesale" ? "Abrir catálogo por mayor" : "Abrir catálogo normal"}</Button></DialogFooter>
+          <DialogFooter className="flex gap-2">
+            <Button onClick={() => void createPublicCatalogLink("normal")} disabled={isCreatingPublicCatalog}>Catálogo normal</Button>
+            <Button onClick={() => void createPublicCatalogLink("wholesale")} disabled={isCreatingPublicCatalog}>Catálogo por mayor</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
