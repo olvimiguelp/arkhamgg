@@ -1,11 +1,22 @@
-import React, { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { createClient } from "./lib/supabase/client"
 import "./styles.css"
 
-type Product = { id: string; sku: string; name: string; category: string; stock: number; sell_price: number; image_url?: string }
+type Product = {
+  id: string
+  sku: string
+  name: string
+  category: string
+  stock: number
+  sell_price: number
+  image_url?: string
+}
+
 type Line = Product & { quantity: number }
-const money = (value: number) => new Intl.NumberFormat("es-DO", { minimumFractionDigits: 2 }).format(value)
+
+const money = (value: number) =>
+  new Intl.NumberFormat("es-DO", { minimumFractionDigits: 2 }).format(value)
 
 function CatalogoPublico() {
   const token = new URLSearchParams(window.location.search).get("token") || ""
@@ -13,26 +24,145 @@ function CatalogoPublico() {
   const [business, setBusiness] = useState("Catálogo de productos")
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<Line[]>([])
-  const [name, setName] = useState(""); const [phone, setPhone] = useState("")
-  const [loading, setLoading] = useState(true); const [sending, setSending] = useState(false)
-  const [message, setMessage] = useState(""); const [done, setDone] = useState(false)
+  const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
+  const [message, setMessage] = useState("")
+  const [done, setDone] = useState(false)
 
-  useEffect(() => { (async () => {
-    const { data: share } = await supabase.from("catalog_shares").select("owner_admin_id, product_ids, business_name, active, expires_at").eq("token", token).maybeSingle()
-    if (!share || !share.active || (share.expires_at && new Date(share.expires_at) < new Date())) { setMessage("Este enlace no es válido o ha vencido."); setLoading(false); return }
-    setBusiness(share.business_name || "Catálogo de productos")
-    const { data } = await supabase.from("products").select("id, sku, name, category, stock, sell_price, image_url").eq("owner_admin_id", share.owner_admin_id).in("id", share.product_ids || []).gt("stock", 0).order("name")
-    setProducts(data || []); setLoading(false)
-  })() }, [supabase, token])
+  useEffect(() => {
+    void (async () => {
+      const { data: share } = await supabase
+        .from("catalog_shares")
+        .select("owner_admin_id, product_ids, business_name, active, expires_at")
+        .eq("token", token)
+        .maybeSingle()
 
-  const add = (product: Product) => setCart(current => { const found = current.find(x => x.id === product.id); return found ? current.map(x => x.id === product.id ? { ...x, quantity: Math.min(x.quantity + 1, product.stock) } : x) : [...current, { ...product, quantity: 1 }] })
+      if (!share || !share.active || (share.expires_at && new Date(share.expires_at) < new Date())) {
+        setMessage("Este enlace no es válido o ha vencido.")
+        setLoading(false)
+        return
+      }
+
+      setBusiness(share.business_name || "Catálogo de productos")
+      const { data } = await supabase
+        .from("products")
+        .select("id, sku, name, category, stock, sell_price, image_url")
+        .eq("owner_admin_id", share.owner_admin_id)
+        .in("id", share.product_ids || [])
+        .gt("stock", 0)
+        .order("name")
+
+      setProducts(data || [])
+      setLoading(false)
+    })()
+  }, [supabase, token])
+
+  const add = (product: Product) =>
+    setCart((current) => {
+      const found = current.find((item) => item.id === product.id)
+      if (found) {
+        return current.map((item) =>
+          item.id === product.id
+            ? { ...item, quantity: Math.min(item.quantity + 1, product.stock) }
+            : item,
+        )
+      }
+      return [...current, { ...product, quantity: 1 }]
+    })
+
+  const remove = (id: string) => setCart((current) => current.filter((item) => item.id !== id))
+  const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
-  const send = async () => { setSending(true); setMessage(""); const { error } = await supabase.rpc("submit_catalog_order", { p_token: token, p_customer_name: name.trim(), p_customer_phone: phone.trim(), p_items: cart.map(x => ({ id: x.id, sku: x.sku, name: x.name, category: x.category, sellPrice: Number(x.sell_price), stock: x.stock, quantity: x.quantity, sourceTable: "products", sourceId: x.id, cartId: x.id })) }); setSending(false); if (error) setMessage(error.message); else { setDone(true); setCart([]) } }
 
-  if (loading) return <div className="center">Cargando catálogo…</div>
-  if (message && !products.length) return <div className="center"><div className="panel"><h1>Catálogo no disponible</h1><p>{message}</p></div></div>
-  if (done) return <div className="center"><div className="panel"><h1>✓ Pedido enviado</h1><p>El administrador recibió tu selección y continuará con la facturación.</p></div></div>
-  return <main><header><div><small>CATÁLOGO COMPARTIDO</small><h1>{business}</h1><p>Selecciona los productos disponibles</p></div><strong>🛒 {cart.reduce((sum, x) => sum + x.quantity, 0)}</strong></header><section className="grid">{products.map(product => <article className="product" key={product.id}>{product.image_url ? <img src={product.image_url} alt={product.name} /> : <div className="placeholder">Producto</div>}<small>{product.category}</small><h2>{product.name}</h2><b>RD$ {money(Number(product.sell_price))}</b><p>Disponible: {product.stock}</p><button onClick={() => add(product)}>Agregar al carrito</button></article>)}</section>{!products.length && <p className="empty">No hay productos disponibles.</p>}{cart.length > 0 && <aside><div className="cart-lines">{cart.map(item => <span key={item.id}>{item.name} × {item.quantity} <button onClick={() => setCart(cart.filter(x => x.id !== item.id))}>Quitar</button></span>)}</div><div className="checkout"><input placeholder="Tu nombre" value={name} onChange={e => setName(e.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={e => setPhone(e.target.value)} /><b>Total RD$ {money(total)}</b><button disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando…" : "Enviar selección"}</button></div>{message && <p className="error">{message}</p>}</aside>}</main>
+  const send = async () => {
+    setSending(true)
+    setMessage("")
+    const { error } = await supabase.rpc("submit_catalog_order", {
+      p_token: token,
+      p_customer_name: name.trim(),
+      p_customer_phone: phone.trim(),
+      p_items: cart.map((item) => ({
+        id: item.id,
+        sku: item.sku,
+        name: item.name,
+        category: item.category,
+        sellPrice: Number(item.sell_price),
+        stock: item.stock,
+        quantity: item.quantity,
+        sourceTable: "products",
+        sourceId: item.id,
+        cartId: item.id,
+      })),
+    })
+    setSending(false)
+    if (error) setMessage(error.message)
+    else {
+      setDone(true)
+      setCart([])
+    }
+  }
+
+  if (loading) {
+    return <div className="state-screen"><div className="loader" /><p>Cargando catálogo</p></div>
+  }
+
+  if (message && !products.length) {
+    return <div className="state-screen"><div className="state-card"><span className="state-icon">!</span><h1>Catálogo no disponible</h1><p>{message}</p></div></div>
+  }
+
+  if (done) {
+    return <div className="state-screen"><div className="state-card"><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
+  }
+
+  return (
+    <div className="catalog-shell">
+      <header className="site-header">
+        <div className="header-inner">
+          <div className="brand-mark">A</div>
+          <div className="brand-copy"><span>CATÁLOGO</span><strong>{business}</strong></div>
+          <div className="header-cart"><span className="cart-symbol">♧</span><span>{itemCount} {itemCount === 1 ? "artículo" : "artículos"}</span></div>
+        </div>
+      </header>
+
+      <main className="content-wrap">
+        <section className="hero">
+          <div><p className="eyebrow">PRODUCTOS DISPONIBLES</p><h1>Encuentra lo que necesitas</h1><p className="hero-copy">Explora nuestro catálogo y arma tu pedido en pocos pasos.</p></div>
+          <div className="product-count"><strong>{products.length}</strong><span>productos</span></div>
+        </section>
+
+        <div className="section-heading"><div><h2>Todos los productos</h2><p>Disponibles para entrega inmediata</p></div></div>
+
+        {products.length ? (
+          <section className="product-grid">
+            {products.map((product) => {
+              const inCart = cart.find((item) => item.id === product.id)?.quantity || 0
+              return <article className="product-card" key={product.id}>
+                <div className="product-image-wrap">
+                  {product.image_url ? <img src={product.image_url} alt={product.name} /> : <div className="image-placeholder"><span>✦</span></div>}
+                  {product.category && <span className="category-badge">{product.category}</span>}
+                </div>
+                <div className="product-info">
+                  <h3>{product.name}</h3>
+                  <p className="stock-label"><span className="stock-dot" /> {product.stock} disponibles</p>
+                  <div className="product-footer"><div><span className="price-label">Precio</span><strong>RD$ {money(Number(product.sell_price))}</strong></div><button className="add-button" onClick={() => add(product)}>{inCart ? `Añadir más · ${inCart}` : "Añadir"}<span>＋</span></button></div>
+                </div>
+              </article>
+            })}
+          </section>
+        ) : <div className="empty-card"><span>⌁</span><h3>No hay productos disponibles</h3><p>Este catálogo no tiene productos con stock en este momento.</p></div>}
+      </main>
+
+      {cart.length > 0 && <aside className="cart-panel">
+        <div className="cart-header"><div><p className="eyebrow">TU SELECCIÓN</p><h2>Resumen del pedido</h2></div><span className="cart-badge">{itemCount}</span></div>
+        <div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div>
+        <div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div>
+        <div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>
+        {message && <p className="error-message">{message}</p>}
+      </aside>}
+    </div>
+  )
 }
 
-createRoot(document.getElementById("root")!).render(<React.StrictMode><CatalogoPublico /></React.StrictMode>)
+createRoot(document.getElementById("root")!).render(<CatalogoPublico />)
