@@ -127,12 +127,7 @@ function CatalogoPublico() {
       </header>
 
       <main className="content-wrap">
-        <section className="hero">
-          <div><p className="eyebrow">PRODUCTOS DISPONIBLES</p><h1>Encuentra lo que necesitas</h1><p className="hero-copy">Explora nuestro catálogo y arma tu pedido en pocos pasos.</p></div>
-          <div className="product-count"><strong>{products.length}</strong><span>productos</span></div>
-        </section>
-
-        <div className="section-heading"><div><h2>Todos los productos</h2><p>Disponibles para entrega inmediata</p></div></div>
+        <div className="catalog-toolbar"><div><p className="eyebrow">CATÁLOGO</p><h1>Todos los productos</h1></div><div className="product-count"><strong>{products.length}</strong><span>disponibles</span></div></div>
 
         {products.length ? (
           <section className="product-grid">
