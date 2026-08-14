@@ -1,14 +1,11 @@
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react-swc"
-import path from "node:path"
+
 export default defineConfig({
+  // Configuración estándar de Vite: al ejecutar Vite dentro de esta carpeta,
+  // el resultado queda en catalogo-publico/dist.
   root: __dirname,
-  base: "/catalogo-publico/",
+  base: process.env.VITE_BASE_PATH || "/",
   plugins: [react()],
-  resolve: { alias: { "@": path.resolve(__dirname, "../src") } },
-  build: {
-    // El catálogo se publica como una subruta de la aplicación principal.
-    outDir: "../dist/catalogo-publico",
-    emptyOutDir: true,
-  },
+  build: { outDir: "dist", emptyOutDir: true },
 })

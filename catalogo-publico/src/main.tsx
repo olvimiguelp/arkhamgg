@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react"
 import { createRoot } from "react-dom/client"
-import { createClient } from "../../src/lib/supabase/client"
+import { createClient } from "./lib/supabase/client"
 import "./styles.css"
 
 type Product = { id: string; sku: string; name: string; category: string; stock: number; sell_price: number; image_url?: string }

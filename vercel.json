@@ -2,6 +2,9 @@
   "version": 2,
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist",
+  "env": {
+    "VITE_BASE_PATH": "/catalogo-publico/"
+  },
   "routes": [
     {
       "handle": "filesystem"
