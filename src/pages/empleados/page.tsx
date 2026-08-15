@@ -55,6 +55,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
+import { getPublicCatalogUrl } from "@/lib/public-catalog-url"
 
 const readAccessFlag = (value: any): boolean => {
   if (typeof value === "boolean") return value
@@ -256,11 +257,11 @@ export default function EmpleadosPage() {
       })
       if (error) throw error
       setPublicCatalogType(priceMode)
-      setPublicCatalogLink(`${window.location.origin}/catalogo-publico/?token=${token}`)
+      setPublicCatalogLink(getPublicCatalogUrl(token))
       setIsPublicCatalogDialogOpen(true)
     } catch (error) {
       console.error("Error creating public catalog link:", error)
-      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
+      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada y configura VITE_PUBLIC_CATALOG_URL si usas la aplicación de escritorio."}`, variant: "destructive" })
     } finally {
       setIsCreatingPublicCatalog(false)
     }
