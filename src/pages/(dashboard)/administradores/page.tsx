@@ -332,6 +332,7 @@ export default function AdministradoresPage() {
           admin={viewingAdmin} 
           business={businesses.find((b) => b.id === viewingAdmin.businessId)}
           employeeCount={getEmployeeCount(viewingAdmin.id)}
+          errorMessage={contextError}
           onClose={() => setViewingAdmin(null)}
           onUpdateSubscription={(subscription) => {
             const business = businesses.find((b) => b.id === viewingAdmin.businessId)
@@ -407,24 +408,35 @@ function ViewAdminModal({
   admin, 
   business,
   employeeCount,
+  errorMessage,
   onClose,
   onUpdateSubscription
 }: { 
   admin: Admin
   business?: Business
   employeeCount: number
+  errorMessage?: string | null
   onClose: () => void
   onUpdateSubscription: (subscription: Subscription) => void
 }) {
   const [showSubscriptionEditor, setShowSubscriptionEditor] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan>(business?.subscription?.plan || "gratis")
+  const permissions = Array.isArray(admin.permissions) ? admin.permissions : []
+  const adminName = admin.name || "Administrador"
 
-  const formatDate = (date: Date) => {
-    return new Date(date).toLocaleDateString("es-ES", {
+  const formatDate = (date?: Date | string | null) => {
+    const parsedDate = date ? new Date(date) : null
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) return "No disponible"
+    return parsedDate.toLocaleDateString("es-ES", {
       year: "numeric",
       month: "long",
       day: "numeric",
     })
+  }
+
+  const formatPrice = (value: unknown) => {
+    const price = Number(value)
+    return Number.isFinite(price) ? price.toFixed(2) : "0.00"
   }
 
   const handleSaveSubscription = () => {
@@ -459,11 +471,11 @@ function ViewAdminModal({
               <img src={admin.avatar} alt="" className="h-16 w-16 rounded-xl object-cover border border-border" />
             ) : (
               <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white font-bold text-xl">
-                {admin.name.charAt(0).toUpperCase()}
+                {adminName.charAt(0).toUpperCase()}
               </div>
             )}
             <div>
-              <h2 className="text-xl font-bold text-foreground">{admin.name}</h2>
+              <h2 className="text-xl font-bold text-foreground">{adminName}</h2>
               <div className="flex items-center gap-2 mt-1">
                 <Shield className="h-4 w-4 text-blue-500" />
                 <span className="text-sm text-muted-foreground">Administrador</span>
@@ -547,7 +559,7 @@ function ViewAdminModal({
                   </span>
                 </div>
                 <div className="text-sm text-white/80 space-y-1">
-                  <p>Precio: ${business.subscription.price.toFixed(2)}</p>
+                  <p>Precio: ${formatPrice(business.subscription.price)}</p>
                   <p>Vence: {formatDate(business.subscription.endDate)}</p>
                 </div>
               </div>
@@ -636,10 +648,10 @@ function ViewAdminModal({
           </div>
 
           <div className="pt-4 border-t border-border">
-            <p className="text-sm text-muted-foreground mb-3">Permisos ({admin.permissions.length})</p>
-            {contextError && <div className="text-sm text-red-500 mb-2">{contextError}</div>}
+            <p className="text-sm text-muted-foreground mb-3">Permisos ({permissions.length})</p>
+            {errorMessage && <div className="text-sm text-red-500 mb-2">{errorMessage}</div>}
             <div className="flex flex-wrap gap-2">
-              {admin.permissions.slice(0, 6).map((perm) => {
+              {permissions.slice(0, 6).map((perm) => {
                 const permission =
                   TENANT_PAGE_PERMISSION_OPTIONS.find((p) => p.superKey === perm) ??
                   PERMISSIONS.find((p) => p.value === perm)
@@ -649,9 +661,9 @@ function ViewAdminModal({
                   </span>
                 )
               })}
-              {admin.permissions.length > 6 && (
+              {permissions.length > 6 && (
                 <span className="px-2 py-1 bg-blue-500/10 text-blue-600 text-xs rounded-lg">
-                  +{admin.permissions.length - 6} mas
+                  +{permissions.length - 6} mas
                 </span>
               )}
             </div>
@@ -993,5 +1005,3 @@ function StatusModal({
     </div>
   )
 }
-
-

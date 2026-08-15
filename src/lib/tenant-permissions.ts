@@ -23,6 +23,7 @@ export const TENANT_PAGE_PERMISSION_OPTIONS: TenantPagePermissionOption[] = [
   { dbKey: "importCustomers", superKey: "manage_customer_imports", label: "Importar Clientes", category: "ventas" },
   { dbKey: "clienteAlmacen", superKey: "manage_warehouse_customers", label: "Cliente Almacen", category: "ventas" },
   { dbKey: "suppliers", superKey: "manage_suppliers", label: "Proveedores", category: "inventario" },
+  { dbKey: "purchases", superKey: "manage_purchases", label: "Registro de Facturas", category: "inventario" },
   { dbKey: "employees", superKey: "manage_employees", label: "Empleados", category: "admin" },
   { dbKey: "reports", superKey: "view_reports", label: "Reportes", category: "reportes" },
   { dbKey: "cashClosing", superKey: "manage_cash", label: "Cierre de Caja", category: "finanzas" },
