@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-08-14 00:09:18 -04:00
+-- Generado: 2026-08-15 12:48:45 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -343,7 +343,14 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 -- Índices para búsqueda rápida
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_owner_sku ON products(owner_admin_id, sku);
+-- IF NOT EXISTS no evita conflictos cuando existe otra relación con el mismo
+-- nombre (por ejemplo, un índice creado manualmente en una instalación previa).
+DO $$
+BEGIN
+  IF to_regclass('public.idx_products_owner_sku') IS NULL THEN
+    CREATE UNIQUE INDEX idx_products_owner_sku ON public.products(owner_admin_id, sku);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_products_owner_admin_id ON products(owner_admin_id);
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
@@ -2079,7 +2086,9 @@ DO $$
 BEGIN
   IF to_regclass('public.products') IS NOT NULL THEN
     ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_sku_key;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_owner_sku ON public.products(owner_admin_id, sku);
+    IF to_regclass('public.idx_products_owner_sku') IS NULL THEN
+      CREATE UNIQUE INDEX idx_products_owner_sku ON public.products(owner_admin_id, sku);
+    END IF;
   END IF;
 
   IF to_regclass('public.armacen') IS NOT NULL THEN
@@ -3518,10 +3527,61 @@ END; $$;
 
 GRANT EXECUTE ON FUNCTION public.submit_catalog_order(TEXT, TEXT, TEXT, JSONB) TO anon, authenticated;
 
+-- ====================================================
+-- Source: 061-create-purchase-attachments.sql
+-- ====================================================
+
+-- 061-create-purchase-attachments.sql
+-- Soporte para adjuntar el documento real de una factura de compra (PDF o
+-- foto) y el comprobante de un abono, además de clasificar el tipo de
+-- compra (piezas / productos / otros gastos).
+
+-- 1. Bucket para los adjuntos de facturas de proveedores y comprobantes de
+--    abono. Se usa un bucket separado del bucket "facturas" (que solo
+--    permite PDF/JSON para facturas de venta) porque aquí también se suben
+--    fotos tomadas con el celular.
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'facturas-proveedores',
+  'facturas-proveedores',
+  true,
+  10485760, -- 10MB máximo por archivo
+  ARRAY['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
+)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE POLICY "Adjuntos de facturas de proveedores públicos para lectura"
+ON storage.objects FOR SELECT
+USING (bucket_id = 'facturas-proveedores');
+
+CREATE POLICY "Permitir subir adjuntos de facturas de proveedores"
+ON storage.objects FOR INSERT
+WITH CHECK (bucket_id = 'facturas-proveedores');
+
+CREATE POLICY "Permitir actualizar adjuntos de facturas de proveedores"
+ON storage.objects FOR UPDATE
+USING (bucket_id = 'facturas-proveedores');
+
+CREATE POLICY "Permitir eliminar adjuntos de facturas de proveedores"
+ON storage.objects FOR DELETE
+USING (bucket_id = 'facturas-proveedores');
+
+-- 2. Columnas nuevas en "purchases": tipo de compra y adjunto del
+--    documento original.
+ALTER TABLE purchases
+  ADD COLUMN IF NOT EXISTS purchase_kind text NOT NULL DEFAULT 'productos'
+    CHECK (purchase_kind IN ('piezas', 'productos', 'otros')),
+  ADD COLUMN IF NOT EXISTS attachment_url text,
+  ADD COLUMN IF NOT EXISTS attachment_type text;
+
+-- 3. Columna nueva en "supplier_payments": comprobante del abono.
+ALTER TABLE supplier_payments
+  ADD COLUMN IF NOT EXISTS attachment_url text;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (63):
+-- Archivos concatenados (64):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -3585,3 +3645,4 @@ GRANT EXECUTE ON FUNCTION public.submit_catalog_order(TEXT, TEXT, TEXT, JSONB) T
 --   - 058-add-employee-crud-permission-defaults.sql
 --   - 059-public-catalog.sql
 --   - 060-public-catalog-wholesale.sql
+--   - 061-create-purchase-attachments.sql

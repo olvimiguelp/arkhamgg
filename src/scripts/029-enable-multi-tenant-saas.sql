@@ -205,7 +205,9 @@ DO $$
 BEGIN
   IF to_regclass('public.products') IS NOT NULL THEN
     ALTER TABLE public.products DROP CONSTRAINT IF EXISTS products_sku_key;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_products_owner_sku ON public.products(owner_admin_id, sku);
+    IF to_regclass('public.idx_products_owner_sku') IS NULL THEN
+      CREATE UNIQUE INDEX idx_products_owner_sku ON public.products(owner_admin_id, sku);
+    END IF;
   END IF;
 
   IF to_regclass('public.armacen') IS NOT NULL THEN

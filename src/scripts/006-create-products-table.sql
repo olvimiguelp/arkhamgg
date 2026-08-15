@@ -19,7 +19,14 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 -- Índices para búsqueda rápida
-CREATE UNIQUE INDEX IF NOT EXISTS idx_products_owner_sku ON products(owner_admin_id, sku);
+-- IF NOT EXISTS no evita conflictos cuando existe otra relación con el mismo
+-- nombre (por ejemplo, un índice creado manualmente en una instalación previa).
+DO $$
+BEGIN
+  IF to_regclass('public.idx_products_owner_sku') IS NULL THEN
+    CREATE UNIQUE INDEX idx_products_owner_sku ON public.products(owner_admin_id, sku);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_products_owner_admin_id ON products(owner_admin_id);
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);

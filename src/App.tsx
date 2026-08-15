@@ -12,7 +12,7 @@ const Productos = lazy(() => import("./pages/productos/page"));
 const Clientes = lazy(() => import("./pages/clientes/page"));
 const ClienteAlmacen = lazy(() => import("./pages/cliente-almacen/page"));
 const Proveedores = lazy(() => import("./pages/proveedores/page"));
-const FacturasProveedores = lazy(() => import("./pages/facturas-proveedores/page"));
+const Facturas = lazy(() => import("./pages/facturas/page"));
 const Login = lazy(() => import("./pages/login/page"));
 const Bloqueo = lazy(() => import("./pages/bloqueo/page"));
 const SuscripcionVencida = lazy(() => import("./pages/suscripcion-vencida/page"));
@@ -21,7 +21,6 @@ const Devoluciones = lazy(() => import("./pages/devoluciones/page"));
 const Empleados = lazy(() => import("./pages/empleados/page"));
 const HistorialFacturas = lazy(() => import("./pages/historial-facturas/page"));
 const HistorialFacturasAlmacen = lazy(() => import("./pages/historial-facturas-almacen/page"));
-const ProductosAnadidos = lazy(() => import("./pages/productos-anadidos/page"));
 const CierreDeCaja = lazy(() => import("./pages/cierre-de-caja/page"));
 const CierreDeAlmacen = lazy(() => import("./pages/cierre-de-almacen/page"));
 const Reparaciones = lazy(() => import("./pages/reparaciones/page"));
@@ -117,14 +116,13 @@ const App = () => {
                       <Route path="/clientes" element={<Clientes />} />
                       <Route path="/cliente-almacen" element={<ClienteAlmacen />} />
                       <Route path="/proveedores" element={<Proveedores />} />
-                      <Route path="/facturas-proveedores" element={<FacturasProveedores />} />
+                      <Route path="/facturas" element={<Facturas />} />
                       <Route path="/cierre-de-caja" element={<CierreDeCaja />} />
                       <Route path="/informe-cierre-turno" element={<InformeCierreTurno />} />
                       <Route path="/cierre-de-almacen" element={<CierreDeAlmacen />} />
                       <Route path="/reportes" element={<Reportes />} />
                       <Route path="/historial-facturas" element={<HistorialFacturas />} />
                       <Route path="/historial-facturas-almacen" element={<HistorialFacturasAlmacen />} />
-                      <Route path="/productos-anadidos" element={<ProductosAnadidos />} />
                       <Route path="/reparaciones" element={<Reparaciones />} />
                       <Route path="/cola-exclusiva" element={<ColaExclusiva />} />
                       <Route path="/cola" element={<Navigate to="/reparaciones" replace />} />

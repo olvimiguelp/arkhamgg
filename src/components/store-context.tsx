@@ -195,6 +195,12 @@ export interface Purchase {
   dueDate?: string
   status: "pendiente" | "parcial" | "pagado"
   notes?: string
+  /** Clasifica la compra: repuestos/piezas, productos de inventario u otros gastos sin inventario. */
+  purchaseKind?: "piezas" | "productos" | "otros"
+  /** URL pública del documento original de la factura (PDF o foto) en Supabase Storage. */
+  attachmentUrl?: string
+  /** MIME type del adjunto, ej. "application/pdf" o "image/jpeg". */
+  attachmentType?: string
 }
 
 export interface SupplierPayment {
@@ -207,6 +213,8 @@ export interface SupplierPayment {
   previousDebt: number
   remainingDebt: number
   note?: string
+  /** URL pública del comprobante de pago (foto/PDF) adjunto al abono. */
+  attachmentUrl?: string
 }
 
 export interface RepairStatusHistoryEntry {
@@ -351,9 +359,7 @@ export interface Employee {
     wholesaleSales: boolean
     wholesaleDiscounts: boolean
     turnReport: boolean
-    addedProducts: boolean
     importCustomers: boolean
-    supplierInvoices: boolean
     canAdd: boolean
     canEdit: boolean
     canDelete: boolean
@@ -620,7 +626,6 @@ const normalizeEmployeePermissions = (permissions: any): Employee["permissions"]
   returns: coercePermissionFlag(permissions?.returns, false),
   purchases: coercePermissionFlag(permissions?.purchases, false),
   importCustomers: coercePermissionFlag(permissions?.importCustomers, false),
-  supplierInvoices: coercePermissionFlag(permissions?.supplierInvoices, false),
   employees: coercePermissionFlag(permissions?.employees, false),
   cashClosing: coercePermissionFlag(permissions?.cashClosing, false),
   invoiceHistory: coercePermissionFlag(permissions?.invoiceHistory, false),
@@ -632,7 +637,6 @@ const normalizeEmployeePermissions = (permissions: any): Employee["permissions"]
   wholesaleSales: coercePermissionFlag(permissions?.wholesaleSales, false),
   wholesaleDiscounts: coercePermissionFlag(permissions?.wholesaleDiscounts, false),
   turnReport: coercePermissionFlag(permissions?.turnReport, false),
-  addedProducts: coercePermissionFlag(permissions?.addedProducts, false),
   canAdd: coercePermissionFlag(permissions?.canAdd ?? permissions?.can_add, false),
   canEdit: coercePermissionFlag(permissions?.canEdit ?? permissions?.can_edit, false),
   canDelete: coercePermissionFlag(permissions?.canDelete ?? permissions?.can_delete, false),
@@ -699,6 +703,9 @@ const mapPurchaseFromDB = (rec: any): Purchase => ({
   dueDate: rec.due_date,
   status: rec.status || "pendiente",
   notes: rec.notes || undefined,
+  purchaseKind: rec.purchase_kind || "productos",
+  attachmentUrl: rec.attachment_url || undefined,
+  attachmentType: rec.attachment_type || undefined,
 })
 
 const mapSupplierPaymentFromDB = (rec: any): SupplierPayment => ({
@@ -711,6 +718,7 @@ const mapSupplierPaymentFromDB = (rec: any): SupplierPayment => ({
   previousDebt: Number(rec.previous_debt) || 0,
   remainingDebt: Number(rec.remaining_debt) || 0,
   note: rec.note || undefined,
+  attachmentUrl: rec.attachment_url || undefined,
 })
 
 const mapReturnFromDB = (rec: any): Return => ({
@@ -4229,6 +4237,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         due_date: newPurchase.dueDate,
         status: newPurchase.status,
         notes: newPurchase.notes,
+        purchase_kind: newPurchase.purchaseKind || "productos",
+        attachment_url: newPurchase.attachmentUrl,
+        attachment_type: newPurchase.attachmentType,
       }),
     )
 
@@ -4303,6 +4314,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (updatedPurchase.dueDate !== undefined) updateData.due_date = updatedPurchase.dueDate
       if (updatedPurchase.status !== undefined) updateData.status = updatedPurchase.status
       if (updatedPurchase.notes !== undefined) updateData.notes = updatedPurchase.notes
+      if (updatedPurchase.purchaseKind !== undefined) updateData.purchase_kind = updatedPurchase.purchaseKind
+      if (updatedPurchase.attachmentUrl !== undefined) updateData.attachment_url = updatedPurchase.attachmentUrl
+      if (updatedPurchase.attachmentType !== undefined) updateData.attachment_type = updatedPurchase.attachmentType
 
       const { error } = await withTenantFilter(supabase.from("purchases").update(updateData)).eq("id", id)
 
@@ -4371,6 +4385,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         previousDebt,
         remainingDebt: runningDebt,
         note: payment.note,
+        attachmentUrl: payment.attachmentUrl,
       })
       amountToAllocate -= appliedAmount
     }
@@ -4407,6 +4422,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           previous_debt: item.previousDebt,
           remaining_debt: item.remainingDebt,
           note: item.note,
+          attachment_url: item.attachmentUrl,
         })),
       )
       if (paymentError) throw paymentError

@@ -18,10 +18,9 @@ import {
   DollarSign,
   Package,
   ClipboardList,
-  ReceiptText,
   History,
-  PackagePlus,
   Wrench,
+  Receipt,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -105,16 +104,6 @@ export const MENU_ITEMS = [
     permissionKey: "products" as keyof Employee["permissions"],
   },
   {
-    id: "added-products",
-    label: "Productos Añadidos",
-    icon: PackagePlus,
-    to: "/productos-anadidos",
-    subtitle: "Consulta los productos añadidos manualmente en ventas.",
-    actionLabel: null,
-    allowedRoles: ["admin", "employee"] as const,
-    permissionKey: "addedProducts" as keyof Employee["permissions"],
-  },
-  {
     id: "warehouse",
     label: "Almacen",
     icon: Archive,
@@ -166,14 +155,14 @@ export const MENU_ITEMS = [
     permissionKey: "suppliers" as keyof Employee["permissions"],
   },
   {
-    id: "supplier-invoices",
-    label: "Facturas de Proveedores",
-    icon: ReceiptText,
-    to: "/facturas-proveedores",
-    subtitle: "Registra compras, facturas a crédito y abonos a proveedores.",
-    actionLabel: null,
+    id: "purchase-invoices",
+    label: "Registro de Facturas",
+    icon: Receipt,
+    to: "/facturas",
+    subtitle: "Guarda facturas de compra, vincúlalas a productos y controla lo que debes a proveedores.",
+    actionLabel: "Nueva Factura",
     allowedRoles: ["admin", "employee"] as const,
-    permissionKey: "supplierInvoices" as keyof Employee["permissions"],
+    permissionKey: "purchases" as keyof Employee["permissions"],
   },
   {
     id: "employees",

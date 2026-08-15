@@ -83,6 +83,33 @@ type ProductInvoiceLink = {
   sale?: Sale
 }
 
+const getProductSaveError = (error: unknown, sku: string) => {
+  const dbError = error as { code?: string; message?: string }
+  const code = String(dbError?.code || "")
+  const message = String(dbError?.message || "")
+  const lowerMessage = message.toLowerCase()
+
+  if (code === "23505" || lowerMessage.includes("duplicate key") || lowerMessage.includes("unique constraint")) {
+    return { title: "ID duplicada", description: `No se creó el producto porque ya existe otro producto con la ID "${sku}". Usa una ID diferente.` }
+  }
+  if (code === "23503" || lowerMessage.includes("foreign key")) {
+    return { title: "Administrador no válido", description: "No se creó el producto porque la sesión no tiene un administrador válido asociado en la base de datos." }
+  }
+  if (code === "42501" || lowerMessage.includes("row-level security") || lowerMessage.includes("permission denied")) {
+    return { title: "Sin permiso para guardar", description: "La base de datos rechazó la operación por sus políticas de seguridad (RLS). Verifica el administrador activo y sus permisos." }
+  }
+  if (lowerMessage.includes("column") || lowerMessage.includes("schema cache")) {
+    return { title: "Estructura de productos desactualizada", description: `No se creó el producto porque a la tabla products le falta una columna requerida. Ejecuta las migraciones SQL. Detalle: ${message}` }
+  }
+  return { title: "No se pudo crear el producto", description: message || "La base de datos rechazó el producto. Revisa los datos e inténtalo nuevamente." }
+}
+
+const normalizeProductSku = (value: string) => {
+  const compact = value.trim().replace(/\s+/g, "")
+  if (/^\d+$/.test(compact)) return compact.replace(/^0+(?=\d)/, "")
+  return compact.toLocaleLowerCase()
+}
+
 export default function ProductsPage() {
   const { products, suppliers, addProduct, updateProduct, deleteProduct, setOnDialogOpen, employees, currentUser, sales } = useStore()
   const { toast } = useToast()
@@ -496,14 +523,36 @@ export default function ProductsPage() {
       return
     }
 
-    if (!formData.name || !formData.category || !formData.buyPrice || !formData.sellPrice || !formData.stock) {
-      toast({ title: "Error", description: "Por favor completa todos los campos obligatorios", variant: "destructive" })
+    const sku = formData.sku.trim()
+    const name = formData.name.trim()
+    const category = formData.category.trim()
+    const buyPrice = Number.parseFloat(formData.buyPrice)
+    const sellPrice = Number.parseFloat(formData.sellPrice)
+    const stock = Number.parseInt(formData.stock, 10)
+
+    if (!sku || !name || !category || formData.buyPrice.trim() === "" || formData.sellPrice.trim() === "" || formData.stock.trim() === "") {
+      toast({ title: "Faltan datos obligatorios", description: "Completa la ID, el nombre, la categoría, los precios y el inventario. El inventario puede ser 0.", variant: "destructive" })
       return
     }
 
-    let uploadedImageUrl: string | undefined = undefined
+    if (!Number.isFinite(buyPrice) || buyPrice < 0 || !Number.isFinite(sellPrice) || sellPrice < 0 || !Number.isInteger(stock) || stock < 0) {
+      toast({ title: "Datos numéricos inválidos", description: "Los precios deben ser números mayores o iguales a 0 y el inventario debe ser un entero mayor o igual a 0.", variant: "destructive" })
+      return
+    }
 
-    if (imageFile) {
+    const duplicate = products.find((product) => {
+      if (editingId && product.id === editingId) return false
+      return normalizeProductSku(product.sku) === normalizeProductSku(sku)
+    })
+    if (duplicate) {
+      toast({ title: "ID duplicada", description: `No se creó el producto porque "${sku}" ya pertenece a "${duplicate.name}". Cada producto debe tener una ID única.`, variant: "destructive" })
+      return
+    }
+
+    try {
+      let uploadedImageUrl: string | undefined = undefined
+
+      if (imageFile) {
       const uploadId = editingId ? (catalogProducts.find((p) => p.id === editingId)?.sourceId ?? String(Date.now())) : String(Date.now())
       const res = await uploadProductImageToStorage(uploadId, imageFile)
       if (!res.success) {
@@ -513,36 +562,36 @@ export default function ProductsPage() {
       uploadedImageUrl = res.publicUrl
     }
 
-    if (editingId) {
+      if (editingId) {
       const updatedProduct: Product = {
         id: editingId,
-        sku: formData.sku || catalogProducts.find((p) => p.id === editingId)?.sku || Date.now().toString(),
-        name: formData.name,
-        category: formData.category,
-        buyPrice: Number.parseFloat(formData.buyPrice),
+        sku,
+        name,
+        category,
+        buyPrice,
         wholesalePrice: Number.parseFloat(formData.wholesalePrice) || 0,
-        sellPrice: Number.parseFloat(formData.sellPrice),
+        sellPrice,
         minimumSellPrice: Number.parseFloat(formData.minimumSellPrice) || 0,
-        stock: Number.parseInt(formData.stock),
+        stock,
         minStock: Number.parseInt(formData.minStock) || 0,
         supplier: formData.supplier,
         capacity: formData.capacity || undefined,
         imei: formData.imei || undefined,
         imageUrl: uploadedImageUrl || catalogProducts.find((p) => p.id === editingId)?.imageUrl,
       }
-      updateProduct(editingId, updatedProduct)
+      await updateProduct(editingId, updatedProduct)
       toast({ title: "Producto actualizado", description: "El producto se ha actualizado correctamente" })
     } else {
       const newProduct: Product = {
         id: Date.now().toString(),
-        sku: formData.sku || Date.now().toString(),
-        name: formData.name,
-        category: formData.category,
-        buyPrice: Number.parseFloat(formData.buyPrice),
+        sku,
+        name,
+        category,
+        buyPrice,
         wholesalePrice: Number.parseFloat(formData.wholesalePrice) || 0,
-        sellPrice: Number.parseFloat(formData.sellPrice),
+        sellPrice,
         minimumSellPrice: Number.parseFloat(formData.minimumSellPrice) || 0,
-        stock: Number.parseInt(formData.stock),
+        stock,
         minStock: Number.parseInt(formData.minStock) || 0,
         supplier: formData.supplier,
         capacity: formData.capacity || undefined,
@@ -554,8 +603,13 @@ export default function ProductsPage() {
       toast({ title: "Producto agregado", description: "El producto se ha agregado al catálogo" })
     }
 
-    resetForm()
-    setIsDialogOpen(false)
+      resetForm()
+      setIsDialogOpen(false)
+    } catch (error) {
+      const saveError = getProductSaveError(error, sku)
+      console.error("Error al guardar producto:", error)
+      toast({ title: saveError.title, description: saveError.description, variant: "destructive" })
+    }
   }
 
   const handleEditProduct = (product: Product) => {

@@ -23,7 +23,6 @@ export const TENANT_PAGE_PERMISSION_OPTIONS: TenantPagePermissionOption[] = [
   { dbKey: "importCustomers", superKey: "manage_customer_imports", label: "Importar Clientes", category: "ventas" },
   { dbKey: "clienteAlmacen", superKey: "manage_warehouse_customers", label: "Cliente Almacen", category: "ventas" },
   { dbKey: "suppliers", superKey: "manage_suppliers", label: "Proveedores", category: "inventario" },
-  { dbKey: "supplierInvoices", superKey: "manage_supplier_invoices", label: "Facturas de Proveedores", category: "inventario" },
   { dbKey: "employees", superKey: "manage_employees", label: "Empleados", category: "admin" },
   { dbKey: "reports", superKey: "view_reports", label: "Reportes", category: "reportes" },
   { dbKey: "cashClosing", superKey: "manage_cash", label: "Cierre de Caja", category: "finanzas" },
@@ -32,7 +31,6 @@ export const TENANT_PAGE_PERMISSION_OPTIONS: TenantPagePermissionOption[] = [
   { dbKey: "wholesaleSales", superKey: "manage_wholesale_sales", label: "Ventas por Mayor", category: "ventas" },
   { dbKey: "wholesaleDiscounts", superKey: "manage_wholesale_discounts", label: "Descuentos por Mayor", category: "ventas" },
   { dbKey: "turnReport", superKey: "view_turn_report", label: "Informe de Cierre de Turno", category: "reportes" },
-  { dbKey: "addedProducts", superKey: "view_added_products", label: "Productos Añadidos", category: "inventario" },
 ]
 
 const SUPER_TO_DB = new Map(TENANT_PAGE_PERMISSION_OPTIONS.map((item) => [item.superKey, item.dbKey]))
@@ -58,9 +56,7 @@ const EMPTY_PERMISSIONS: Employee["permissions"] = {
   wholesaleSales: false,
   wholesaleDiscounts: false,
   turnReport: false,
-  addedProducts: false,
   importCustomers: false,
-  supplierInvoices: false,
   canAdd: false,
   canEdit: false,
   canDelete: false,
@@ -88,9 +84,7 @@ export const FULL_TENANT_PERMISSIONS: Employee["permissions"] = {
   wholesaleSales: true,
   wholesaleDiscounts: true,
   turnReport: true,
-  addedProducts: true,
   importCustomers: true,
-  supplierInvoices: true,
   canAdd: true,
   canEdit: true,
   canDelete: true,
