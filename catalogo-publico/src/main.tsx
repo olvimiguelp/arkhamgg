@@ -33,6 +33,7 @@ function CatalogoPublico() {
   const [done, setDone] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
+  const [selectedCategory, setSelectedCategory] = useState("all")
 
   useEffect(() => {
     void (async () => {
@@ -80,6 +81,14 @@ function CatalogoPublico() {
   const remove = (id: string) => setCart((current) => current.filter((item) => item.id !== id))
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
+  const categories = useMemo(
+    () => Array.from(new Set(products.map((product) => product.category).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [products],
+  )
+  const filteredProducts = useMemo(
+    () => selectedCategory === "all" ? products : products.filter((product) => product.category === selectedCategory),
+    [products, selectedCategory],
+  )
 
   const send = async () => {
     setSending(true)
@@ -132,11 +141,11 @@ function CatalogoPublico() {
       </header>
 
       <main className="content-wrap">
-        <div className="catalog-toolbar"><div><p className="eyebrow">CATÁLOGO</p><h1>Todos los productos</h1></div><div className="product-count"><strong>{products.length}</strong><span>disponibles</span></div></div>
+        <div className="catalog-filter-row"><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
 
-        {products.length ? (
+        {filteredProducts.length ? (
           <section className="product-grid">
-            {products.map((product) => {
+            {filteredProducts.map((product) => {
               const inCart = cart.find((item) => item.id === product.id)?.quantity || 0
               return <article className="product-card" key={product.id} onClick={() => setSelectedProduct(product)}>
                 <div className="product-image-wrap">
@@ -151,7 +160,7 @@ function CatalogoPublico() {
               </article>
             })}
           </section>
-        ) : <div className="empty-card"><span>⌁</span><h3>No hay productos disponibles</h3><p>Este catálogo no tiene productos con stock en este momento.</p></div>}
+        ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No hay productos en esta categoría" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba seleccionando otra categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
       </main>
 
       <button className="cart-fab" onClick={() => setCartOpen(true)} aria-label="Abrir carrito de compra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L20.5 8H6" /><path d="M9 20h.01M17 20h.01" /></svg>{itemCount > 0 && <span className="fab-count">{itemCount}</span>}</button>
