@@ -1,7 +1,8 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useBusinessContext } from "@super_admin/lib/business-context"
+import { createClient } from "@/lib/supabase/client"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { 
   Plus, Search, User, MoreHorizontal, Eye, Pencil, Lock, Unlock, Trash2, 
-  Building2, Mail, Phone, Calendar, Shield, Clock, X, Check, Users, CreditCard, Sparkles
+  Building2, Mail, Phone, Calendar, Shield, Clock, X, Check, Users, CreditCard, Sparkles, Save
 } from "lucide-react"
 import type { Admin, UserStatus, Subscription, SubscriptionPlan, Business } from "@super_admin/lib/types"
 import { PERMISSIONS, SUBSCRIPTION_PLANS } from "@super_admin/lib/types"
@@ -62,6 +63,50 @@ export default function AdministradoresPage() {
   const [showForm, setShowForm] = useState(false)
   const [showStatusModal, setShowStatusModal] = useState<{ admin: Admin; action: "activate" | "suspend" } | null>(null)
   const [statusUpdating, setStatusUpdating] = useState(false)
+  const [catalogUrl, setCatalogUrl] = useState("")
+  const [catalogUrlLoading, setCatalogUrlLoading] = useState(true)
+  const [catalogUrlSaving, setCatalogUrlSaving] = useState(false)
+  const [catalogUrlMessage, setCatalogUrlMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    void (async () => {
+      const { data } = await createClient()
+        .from("system_config")
+        .select("value")
+        .eq("key", "public_catalog_url")
+        .maybeSingle()
+      if (!mounted) return
+      const value = data?.value
+      setCatalogUrl(typeof value === "string" ? value : String((value as { url?: string } | null)?.url || ""))
+      setCatalogUrlLoading(false)
+    })()
+    return () => { mounted = false }
+  }, [])
+
+  const saveCatalogUrl = async () => {
+    const value = catalogUrl.trim()
+    try {
+      const parsed = new URL(value)
+      if (parsed.protocol !== "https:") throw new Error("URL inválida")
+      setCatalogUrlSaving(true)
+      setCatalogUrlMessage(null)
+      const { error } = await createClient().from("system_config").upsert({
+        key: "public_catalog_url",
+        value: { url: value.replace(/\/+$/, "") },
+        description: "URL pública utilizada para compartir el catálogo desde Electron",
+      }, { onConflict: "key" })
+      if (error) throw error
+      setCatalogUrl(value.replace(/\/+$/, ""))
+      setCatalogUrlMessage("URL del catálogo guardada en la base de datos.")
+    } catch (error) {
+      setCatalogUrlMessage((error as Error).message === "URL inválida"
+        ? "Introduce una URL válida que empiece por https://."
+        : `No se pudo guardar la URL: ${(error as { message?: string })?.message || "error desconocido"}`)
+    } finally {
+      setCatalogUrlSaving(false)
+    }
+  }
 
   const filteredAdmins = admins.filter((admin) => {
     const matchesSearch =
@@ -142,6 +187,34 @@ export default function AdministradoresPage() {
           <Plus className="h-4 w-4" />
           Nuevo Administrador
         </button>
+      </div>
+
+      <div className="bg-card border border-border rounded-2xl p-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="flex-1">
+            <h2 className="font-semibold text-foreground">URL pública del catálogo</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Se guardará en Supabase y será utilizada automáticamente por la aplicación Electron al compartir catálogos.
+            </p>
+            <input
+              type="url"
+              value={catalogUrl}
+              onChange={(event) => setCatalogUrl(event.target.value)}
+              disabled={catalogUrlLoading || catalogUrlSaving}
+              placeholder="https://arkhamgg.vercel.app"
+              className="mt-3 w-full rounded-xl border border-border bg-background px-4 py-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+            />
+          </div>
+          <button
+            onClick={() => void saveCatalogUrl()}
+            disabled={catalogUrlLoading || catalogUrlSaving || !catalogUrl.trim()}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Save className="h-4 w-4" />
+            {catalogUrlSaving ? "Guardando..." : "Guardar URL"}
+          </button>
+        </div>
+        {catalogUrlMessage && <p className="mt-3 text-sm text-muted-foreground">{catalogUrlMessage}</p>}
       </div>
 
       {/* Stats */}

@@ -55,7 +55,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
-import { getPublicCatalogUrl } from "@/lib/public-catalog-url"
+import { getPublicCatalogUrl, savePublicCatalogUrl } from "@/lib/public-catalog-url"
 
 const readAccessFlag = (value: any): boolean => {
   if (typeof value === "boolean") return value
@@ -203,7 +203,7 @@ export default function EmpleadosPage() {
   const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
 
   const { config: systemConfig, loading: systemConfigLoading } = useSystemConfig({
-    keys: ["whatsapp_support_link", "whatsapp_support_access"],
+    keys: ["whatsapp_support_link", "whatsapp_support_access", "public_catalog_url"],
   })
 
   const supportAccessConfig = systemConfig?.whatsapp_support_access
@@ -234,6 +234,9 @@ export default function EmpleadosPage() {
     if (!ownerAdminId) return
     setIsCreatingPublicCatalog(true)
     try {
+      const configuredCatalogUrl = typeof systemConfig?.public_catalog_url === "string"
+        ? systemConfig.public_catalog_url
+        : String(systemConfig?.public_catalog_url?.url || "")
       const token = crypto.randomUUID().replaceAll("-", "")
       const catalogProducts = products.filter((product) => {
         if (product.stock <= 0 || product.boxNumber) return false
@@ -257,11 +260,34 @@ export default function EmpleadosPage() {
       })
       if (error) throw error
       setPublicCatalogType(priceMode)
-      setPublicCatalogLink(getPublicCatalogUrl(token))
+      setPublicCatalogLink(getPublicCatalogUrl(token, configuredCatalogUrl))
       setIsPublicCatalogDialogOpen(true)
     } catch (error) {
       console.error("Error creating public catalog link:", error)
-      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada y configura VITE_PUBLIC_CATALOG_URL si usas la aplicación de escritorio."}`, variant: "destructive" })
+      const isMissingDesktopUrl = window.location.protocol === "file:" &&
+        String((error as { message?: string })?.message || "").includes("VITE_PUBLIC_CATALOG_URL")
+
+      if (isMissingDesktopUrl) {
+        const enteredUrl = window.prompt(
+          "Pega la URL pública donde está publicado el catálogo (ejemplo: https://tu-dominio.com/catalogo-publico/):",
+          "https://",
+        )?.trim() || ""
+
+        try {
+          const parsedUrl = new URL(enteredUrl)
+          if (parsedUrl.protocol !== "https:") throw new Error("URL no válida")
+          savePublicCatalogUrl(enteredUrl)
+          setPublicCatalogType(priceMode)
+          setPublicCatalogLink(getPublicCatalogUrl(token, enteredUrl))
+          setIsPublicCatalogDialogOpen(true)
+          return
+        } catch {
+          toast({ title: "URL no válida", description: "Debes introducir una URL pública que empiece por https://.", variant: "destructive" })
+          return
+        }
+      }
+
+      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
     } finally {
       setIsCreatingPublicCatalog(false)
     }
