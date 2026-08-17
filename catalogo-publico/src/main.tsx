@@ -19,6 +19,9 @@ type Line = Product & { quantity: number }
 const money = (value: number) =>
   new Intl.NumberFormat("es-DO", { minimumFractionDigits: 2 }).format(value)
 
+const normalizeSearchText = (value: string) =>
+  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
+
 function CatalogoPublico() {
   const token = new URLSearchParams(window.location.search).get("token") || ""
   const supabase = useMemo(() => createClient(), [])
@@ -34,6 +37,7 @@ function CatalogoPublico() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState("all")
+  const [searchTerm, setSearchTerm] = useState("")
 
   useEffect(() => {
     void (async () => {
@@ -86,8 +90,17 @@ function CatalogoPublico() {
     [products],
   )
   const filteredProducts = useMemo(
-    () => selectedCategory === "all" ? products : products.filter((product) => product.category === selectedCategory),
-    [products, selectedCategory],
+    () => {
+      const normalizedSearch = normalizeSearchText(searchTerm)
+      return products.filter((product) => {
+        const matchesCategory = selectedCategory === "all" || product.category === selectedCategory
+        const matchesSearch = !normalizedSearch
+          || normalizeSearchText(product.name).includes(normalizedSearch)
+          || normalizeSearchText(product.sku).includes(normalizedSearch)
+        return matchesCategory && matchesSearch
+      })
+    },
+    [products, searchTerm, selectedCategory],
   )
 
   const send = async () => {
@@ -141,7 +154,7 @@ function CatalogoPublico() {
       </header>
 
       <main className="content-wrap">
-        <div className="catalog-filter-row"><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
+        <div className="catalog-filter-row"><label className="product-search"><span>Buscar producto</span><div className="search-input-wrap"><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre o código del producto" type="search" /><button type="button" onClick={() => setSearchTerm("")} aria-label="Limpiar búsqueda" hidden={!searchTerm}>×</button></div></label><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
 
         {filteredProducts.length ? (
           <section className="product-grid">
@@ -160,7 +173,7 @@ function CatalogoPublico() {
               </article>
             })}
           </section>
-        ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No hay productos en esta categoría" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba seleccionando otra categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
+        ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
       </main>
 
       <button className="cart-fab" onClick={() => setCartOpen(true)} aria-label="Abrir carrito de compra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L20.5 8H6" /><path d="M9 20h.01M17 20h.01" /></svg>{itemCount > 0 && <span className="fab-count">{itemCount}</span>}</button>
