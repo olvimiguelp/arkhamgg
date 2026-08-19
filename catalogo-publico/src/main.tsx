@@ -19,9 +19,6 @@ type Line = Product & { quantity: number }
 const money = (value: number) =>
   new Intl.NumberFormat("es-DO", { minimumFractionDigits: 2 }).format(value)
 
-const normalizeSearchText = (value: string) =>
-  value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
-
 const PRODUCTS_PER_PAGE = 20
 
 function CatalogoPublico() {
@@ -29,10 +26,13 @@ function CatalogoPublico() {
   const supabase = useMemo(() => createClient(), [])
   const [business, setBusiness] = useState("Catálogo de productos")
   const [products, setProducts] = useState<Product[]>([])
+  const [totalProducts, setTotalProducts] = useState(0)
+  const [catalogConfig, setCatalogConfig] = useState<{ priceMode: string } | null>(null)
   const [cart, setCart] = useState<Line[]>([])
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
   const [loading, setLoading] = useState(true)
+  const [pageLoading, setPageLoading] = useState(false)
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState("")
   const [done, setDone] = useState(false)
@@ -47,7 +47,7 @@ function CatalogoPublico() {
       try {
         const { data: share, error: shareError } = await supabase
           .from("catalog_shares")
-          .select("owner_admin_id, product_ids, business_name, price_mode, active, expires_at")
+          .select("business_name, price_mode, active, expires_at")
           .eq("token", token)
           .maybeSingle()
 
@@ -58,18 +58,7 @@ function CatalogoPublico() {
         }
 
         setBusiness(share.business_name || "Catálogo de productos")
-        const isWholesale = share.price_mode === "wholesale"
-        const { data, error: productsError } = await supabase
-          .from("products")
-          .select("id, sku, name, category, stock, sell_price, wholesale_price, image_url")
-          .eq("owner_admin_id", share.owner_admin_id)
-          .in("id", share.product_ids || [])
-          .gt("stock", 0)
-          .gt(isWholesale ? "wholesale_price" : "sell_price", 0)
-          .order("name")
-
-        if (productsError) throw productsError
-        setProducts((data || []).map((product) => isWholesale ? { ...product, sell_price: product.wholesale_price } : product))
+        setCatalogConfig({ priceMode: share.price_mode || "normal" })
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "No se pudo cargar el catálogo. Revisa tu conexión e inténtalo nuevamente.")
       } finally {
@@ -77,6 +66,43 @@ function CatalogoPublico() {
       }
     })()
   }, [supabase, token])
+
+  useEffect(() => {
+    if (!catalogConfig) return
+    let cancelled = false
+    setPageLoading(true)
+    const timeout = window.setTimeout(() => {
+      if (!cancelled) setMessage("La carga está tardando más de lo esperado. Revisa tu conexión e inténtalo nuevamente.")
+    }, 12000)
+
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc("get_public_catalog_products", {
+          p_token: token,
+          p_limit: PRODUCTS_PER_PAGE,
+          p_offset: (currentPage - 1) * PRODUCTS_PER_PAGE,
+          p_search: searchTerm.trim() || null,
+          p_category: selectedCategory === "all" ? null : selectedCategory,
+        })
+        if (error) throw error
+        if (cancelled) return
+        const pageProducts = (data || []) as (Product & { total_count?: number })[]
+        setProducts(pageProducts)
+        setTotalProducts(Number(pageProducts[0]?.total_count || 0))
+        setMessage("")
+      } catch (error) {
+        if (!cancelled) setMessage(error instanceof Error ? error.message : "No se pudo cargar el catálogo.")
+      } finally {
+        if (!cancelled) setPageLoading(false)
+        window.clearTimeout(timeout)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [catalogConfig, currentPage, searchTerm, selectedCategory, supabase, token])
 
   const add = (product: Product) =>
     setCart((current) => {
@@ -98,32 +124,11 @@ function CatalogoPublico() {
     () => Array.from(new Set(products.map((product) => product.category).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
     [products],
   )
-  const filteredProducts = useMemo(
-    () => {
-      const normalizedSearch = normalizeSearchText(searchTerm)
-      return products.filter((product) => {
-        const matchesCategory = selectedCategory === "all" || product.category === selectedCategory
-        const matchesSearch = !normalizedSearch
-          || normalizeSearchText(product.name).includes(normalizedSearch)
-          || normalizeSearchText(product.sku).includes(normalizedSearch)
-        return matchesCategory && matchesSearch
-      })
-    },
-    [products, searchTerm, selectedCategory],
-  )
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE))
-  const paginatedProducts = useMemo(() => {
-    const start = (currentPage - 1) * PRODUCTS_PER_PAGE
-    return filteredProducts.slice(start, start + PRODUCTS_PER_PAGE)
-  }, [currentPage, filteredProducts])
+  const totalPages = Math.max(1, Math.ceil(totalProducts / PRODUCTS_PER_PAGE))
 
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, selectedCategory])
-
-  useEffect(() => {
-    setCurrentPage((page) => Math.min(page, totalPages))
-  }, [totalPages])
 
   const send = async () => {
     setSending(true)
@@ -178,9 +183,9 @@ function CatalogoPublico() {
       <main className="content-wrap">
         <div className="catalog-filter-row"><label className="product-search"><span>Buscar producto</span><div className="search-input-wrap"><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre o código del producto" type="search" /><button type="button" onClick={() => setSearchTerm("")} aria-label="Limpiar búsqueda" hidden={!searchTerm}>×</button></div></label><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
 
-        {paginatedProducts.length ? (
+        {pageLoading ? <div className="page-loading"><div className="loader" /><p>Cargando productos...</p></div> : products.length ? (
           <section className="product-grid">
-            {paginatedProducts.map((product) => {
+            {products.map((product) => {
               const inCart = cart.find((item) => item.id === product.id)?.quantity || 0
               return <article className="product-card" key={product.id} onClick={() => setSelectedProduct(product)}>
                 <div className="product-image-wrap">
@@ -197,7 +202,7 @@ function CatalogoPublico() {
           </section>
         ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
 
-        {filteredProducts.length > PRODUCTS_PER_PAGE && <nav className="pagination" aria-label="Paginación de productos">
+        {totalProducts > PRODUCTS_PER_PAGE && <nav className="pagination" aria-label="Paginación de productos">
           <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1}>Anterior</button>
           <span>Página {currentPage} de {totalPages}</span>
           <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages}>Siguiente</button>
