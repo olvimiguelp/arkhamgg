@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useRef, useState, useEffect } from "react"
 import { useStore, type Repair, type Customer } from "@/components/store-context"
 import {
   Dialog,
@@ -153,7 +153,10 @@ export function RepairDialog({
   const { toast } = useToast()
   const navigate = useNavigate()
   const isFinalizedRepair = Boolean(
-    editingRepair && (repairs.find((repair) => repair.id === editingRepair.id)?.status || editingRepair.status) === "entregado",
+    editingRepair &&
+      ["entregado", "no_resulto"].includes(
+        repairs.find((repair) => repair.id === editingRepair.id)?.status || editingRepair.status,
+      ),
   )
 
   const [activeTab, setActiveTab] = useState("general")
@@ -345,6 +348,7 @@ export function RepairDialog({
   }
 
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const isSubmittingRef = useRef(false)
 
   // Mode for Printing
   const [printMode, setPrintMode] = useState<"ticket" | "sticker" | null>(null)
@@ -559,6 +563,10 @@ export function RepairDialog({
   }
 
   const handleSave = async (andPrintTicket = false) => {
+    // State updates are asynchronous, so this ref also blocks a second rapid
+    // click before the disabled state is rendered.
+    if (isSubmittingRef.current) return
+
     if (isFinalizedRepair) {
       toast({
         title: "Orden bloqueada",
@@ -579,6 +587,7 @@ export function RepairDialog({
     }
 
     try {
+      isSubmittingRef.current = true
       setIsSubmitting(true)
       const payload = buildRepairPayload()
 
@@ -628,6 +637,7 @@ export function RepairDialog({
         variant: "destructive",
       })
     } finally {
+      isSubmittingRef.current = false
       setIsSubmitting(false)
     }
   }

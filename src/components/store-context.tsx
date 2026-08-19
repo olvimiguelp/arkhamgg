@@ -3983,12 +3983,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         isMissingColumnError(error, "created_by_name"))
     ) {
       const legacyPayload = { ...baseInsertPayload }
-      delete legacyPayload.payment_kind
-      delete legacyPayload.customer_type
-      delete legacyPayload.payment_method
-      delete legacyPayload.created_by_employee_id
-      legacyPayload.note = appendPaymentResponsibleNote(newPayment.note, newPayment.createdByEmployeeName)
-      delete legacyPayload.created_by_name
+      // Remove only columns that are actually missing. If another optional
+      // column is unavailable, keeping payment_method prevents the database
+      // default (cash) from replacing a selected card/transfer method.
+      const missingColumns = [
+        "payment_kind",
+        "customer_type",
+        "payment_method",
+        "created_by_employee_id",
+        "created_by_name",
+      ].filter((column) => isMissingColumnError(error, column))
+
+      missingColumns.forEach((column) => delete legacyPayload[column])
+      if (missingColumns.includes("created_by_employee_id") || missingColumns.includes("created_by_name")) {
+        legacyPayload.note = appendPaymentResponsibleNote(newPayment.note, newPayment.createdByEmployeeName)
+      }
       ;({ error } = await supabase.from("payments").insert(legacyPayload))
     }
 

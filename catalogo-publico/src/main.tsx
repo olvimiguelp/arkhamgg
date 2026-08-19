@@ -22,6 +22,8 @@ const money = (value: number) =>
 const normalizeSearchText = (value: string) =>
   value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim()
 
+const PRODUCTS_PER_PAGE = 20
+
 function CatalogoPublico() {
   const token = new URLSearchParams(window.location.search).get("token") || ""
   const supabase = useMemo(() => createClient(), [])
@@ -38,34 +40,41 @@ function CatalogoPublico() {
   const [cartOpen, setCartOpen] = useState(false)
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [searchTerm, setSearchTerm] = useState("")
+  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     void (async () => {
-      const { data: share } = await supabase
-        .from("catalog_shares")
-        .select("owner_admin_id, product_ids, business_name, price_mode, active, expires_at")
-        .eq("token", token)
-        .maybeSingle()
+      try {
+        const { data: share, error: shareError } = await supabase
+          .from("catalog_shares")
+          .select("owner_admin_id, product_ids, business_name, price_mode, active, expires_at")
+          .eq("token", token)
+          .maybeSingle()
 
-      if (!share || !share.active || (share.expires_at && new Date(share.expires_at) < new Date())) {
-        setMessage("Este enlace no es válido o ha vencido.")
+        if (shareError) throw shareError
+        if (!share || !share.active || (share.expires_at && new Date(share.expires_at) < new Date())) {
+          setMessage("Este enlace no es válido o ha vencido.")
+          return
+        }
+
+        setBusiness(share.business_name || "Catálogo de productos")
+        const isWholesale = share.price_mode === "wholesale"
+        const { data, error: productsError } = await supabase
+          .from("products")
+          .select("id, sku, name, category, stock, sell_price, wholesale_price, image_url")
+          .eq("owner_admin_id", share.owner_admin_id)
+          .in("id", share.product_ids || [])
+          .gt("stock", 0)
+          .gt(isWholesale ? "wholesale_price" : "sell_price", 0)
+          .order("name")
+
+        if (productsError) throw productsError
+        setProducts((data || []).map((product) => isWholesale ? { ...product, sell_price: product.wholesale_price } : product))
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "No se pudo cargar el catálogo. Revisa tu conexión e inténtalo nuevamente.")
+      } finally {
         setLoading(false)
-        return
       }
-
-      setBusiness(share.business_name || "Catálogo de productos")
-      const isWholesale = share.price_mode === "wholesale"
-      const { data } = await supabase
-        .from("products")
-        .select("id, sku, name, category, stock, sell_price, wholesale_price, image_url")
-        .eq("owner_admin_id", share.owner_admin_id)
-        .in("id", share.product_ids || [])
-        .gt("stock", 0)
-        .gt(isWholesale ? "wholesale_price" : "sell_price", 0)
-        .order("name")
-
-      setProducts((data || []).map((product) => isWholesale ? { ...product, sell_price: product.wholesale_price } : product))
-      setLoading(false)
     })()
   }, [supabase, token])
 
@@ -102,6 +111,19 @@ function CatalogoPublico() {
     },
     [products, searchTerm, selectedCategory],
   )
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE))
+  const paginatedProducts = useMemo(() => {
+    const start = (currentPage - 1) * PRODUCTS_PER_PAGE
+    return filteredProducts.slice(start, start + PRODUCTS_PER_PAGE)
+  }, [currentPage, filteredProducts])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, selectedCategory])
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages))
+  }, [totalPages])
 
   const send = async () => {
     setSending(true)
@@ -156,13 +178,13 @@ function CatalogoPublico() {
       <main className="content-wrap">
         <div className="catalog-filter-row"><label className="product-search"><span>Buscar producto</span><div className="search-input-wrap"><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre o código del producto" type="search" /><button type="button" onClick={() => setSearchTerm("")} aria-label="Limpiar búsqueda" hidden={!searchTerm}>×</button></div></label><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
 
-        {filteredProducts.length ? (
+        {paginatedProducts.length ? (
           <section className="product-grid">
-            {filteredProducts.map((product) => {
+            {paginatedProducts.map((product) => {
               const inCart = cart.find((item) => item.id === product.id)?.quantity || 0
               return <article className="product-card" key={product.id} onClick={() => setSelectedProduct(product)}>
                 <div className="product-image-wrap">
-                  {product.image_url ? <img src={product.image_url} alt={product.name} /> : <div className="image-placeholder"><span>✦</span></div>}
+                  {product.image_url ? <img src={product.image_url} alt={product.name} loading="lazy" decoding="async" /> : <div className="image-placeholder"><span>✦</span></div>}
                   {product.category && <span className="category-badge">{product.category}</span>}
                 </div>
                 <div className="product-info">
@@ -174,6 +196,12 @@ function CatalogoPublico() {
             })}
           </section>
         ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
+
+        {filteredProducts.length > PRODUCTS_PER_PAGE && <nav className="pagination" aria-label="Paginación de productos">
+          <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1}>Anterior</button>
+          <span>Página {currentPage} de {totalPages}</span>
+          <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages}>Siguiente</button>
+        </nav>}
       </main>
 
       <button className="cart-fab" onClick={() => setCartOpen(true)} aria-label="Abrir carrito de compra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L20.5 8H6" /><path d="M9 20h.01M17 20h.01" /></svg>{itemCount > 0 && <span className="fab-count">{itemCount}</span>}</button>

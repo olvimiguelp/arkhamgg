@@ -72,7 +72,10 @@ const WORKFLOW_STATES = [
   { id: "esperando_repuesto", label: "Esperando Repuesto", color: "bg-orange-100 text-orange-800 dark:bg-orange-900/60 dark:text-orange-200" },
   { id: "listo", label: "Listo para Entrega", color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200" },
   { id: "entregado", label: "Entregado y Facturado", color: "bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200" },
+  { id: "no_resulto", label: "No resultó", color: "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200" },
 ]
+
+const isTerminalRepairStatus = (status?: string) => status === "entregado" || status === "no_resulto"
 
 export default function ReparacionesPage() {
   const { repairs, repairHistory, updateRepair, deleteRepair, customers, currentUser, setOnDialogOpen, addToCart } = useStore()
@@ -171,7 +174,7 @@ export default function ReparacionesPage() {
   })
 
   const handleEdit = (repair: Repair) => {
-    if (!canEditRepairs || repair.status === "entregado") return
+    if (!canEditRepairs || isTerminalRepairStatus(repair.status)) return
     setPrefillRepair(null)
     setEditingRepair(repair)
     setIsDialogOpen(true)
@@ -248,7 +251,7 @@ export default function ReparacionesPage() {
 
   const handleDelete = async (id: string) => {
     const repair = repairs.find((item) => item.id === id)
-    if (repair?.status === "entregado") {
+    if (repair && isTerminalRepairStatus(repair.status)) {
       toast({
         title: "Orden bloqueada",
         description: "Una orden entregada y facturada no se puede eliminar.",
@@ -278,9 +281,9 @@ export default function ReparacionesPage() {
     const currentRepair = repairs.find((repair) => repair.id === repairId)
     if (!currentRepair) return
 
-    const canReturnToReceived = currentRepair.status === "entregado" && newStatus === "recibido"
+    const canReturnToReceived = isTerminalRepairStatus(currentRepair.status) && newStatus === "recibido"
 
-    if (currentRepair.status === "entregado" && !canReturnToReceived && newStatus !== "entregado") {
+    if (isTerminalRepairStatus(currentRepair.status) && !canReturnToReceived && newStatus !== currentRepair.status) {
       toast({
         title: "Orden bloqueada",
         description: "Una orden entregada y facturada solo puede regresar a recibido si se confirma el error de facturación.",
@@ -311,7 +314,7 @@ export default function ReparacionesPage() {
 
   const handleReturnToReceived = async (repairId: string) => {
     const currentRepair = repairs.find((repair) => repair.id === repairId)
-    if (!currentRepair || currentRepair.status !== "entregado") {
+    if (!currentRepair || !isTerminalRepairStatus(currentRepair.status)) {
       toast({
         title: "Acción no disponible",
         description: "Solo una orden entregada y facturada puede regresar a recibido.",
@@ -397,7 +400,7 @@ export default function ReparacionesPage() {
   }
 
   const handleConvertToInvoice = async (repair: Repair) => {
-    if (repair.status === "entregado") {
+    if (isTerminalRepairStatus(repair.status)) {
       toast({
         title: "Orden ya facturada",
         description: "Esta orden ya está entregada y facturada.",
@@ -506,13 +509,27 @@ export default function ReparacionesPage() {
   const countDiagnostico = repairs.filter((r) => r.status === "en_diagnostico").length
   const countRepuesto = repairs.filter((r) => r.status === "esperando_repuesto").length
   const countListo = repairs.filter((r) => r.status === "listo").length
+  const countEntregado = repairs.filter((r) => r.status === "entregado").length
+  const countNoResulto = repairs.filter((r) => r.status === "no_resulto").length
   const totalPendingMoney = repairs
-    .filter((r) => r.status !== "entregado")
+    // A delivered/invoiced or unsuccessful-and-returned repair no longer
+    // belongs to the workshop receivables.
+    .filter((r) => r.status !== "entregado" && r.status !== "no_resulto")
     .reduce((sum, r) => {
       const costNum = Number(r.cost) || 0
       const depositNum = Number(r.deposit) || 0
       const pending = r.pendingBalance !== undefined ? Number(r.pendingBalance) : Math.max(0, costNum - depositNum)
       return sum + pending
+    }, 0)
+  const totalProfit = repairs
+    .filter((r) => r.status === "entregado")
+    .reduce((sum, repair) => {
+      const charged = Number(repair.cost) || 0
+      const partsCost = (repair.serviceItems || []).reduce(
+        (servicesSum, service) => servicesSum + (Number(service.pieceCost) || 0),
+        0,
+      )
+      return sum + Math.max(0, charged - partsCost)
     }, 0)
 
   return (
@@ -538,7 +555,7 @@ export default function ReparacionesPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
         <Card className="border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
           <CardContent className="p-3.5 flex items-center justify-between">
             <div>
@@ -547,6 +564,30 @@ export default function ReparacionesPage() {
             </div>
             <div className="h-8 w-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center dark:bg-blue-950/40">
               <Clock className="h-4 w-4" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <CardContent className="p-3.5 flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500">Entregados</p>
+              <p className="text-lg font-black text-purple-600">{countEntregado}</p>
+            </div>
+            <div className="h-8 w-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center dark:bg-purple-950/40">
+              <CheckCircle2 className="h-4 w-4" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <CardContent className="p-3.5 flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500">No resultó</p>
+              <p className="text-lg font-black text-rose-600">{countNoResulto}</p>
+            </div>
+            <div className="h-8 w-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center dark:bg-rose-950/40">
+              <AlertTriangle className="h-4 w-4" />
             </div>
           </CardContent>
         </Card>
@@ -594,6 +635,18 @@ export default function ReparacionesPage() {
               <p className="text-lg font-black text-rose-600">RD$ {totalPendingMoney.toLocaleString("es-DO")}</p>
             </div>
             <div className="h-8 w-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center dark:bg-rose-950/40">
+              <DollarSign className="h-4 w-4" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="col-span-2 md:col-span-1 border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+          <CardContent className="p-3.5 flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-gray-500">Ganancia facturada</p>
+              <p className="text-lg font-black text-teal-600">RD$ {totalProfit.toLocaleString("es-DO")}</p>
+            </div>
+            <div className="h-8 w-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center dark:bg-teal-950/40">
               <DollarSign className="h-4 w-4" />
             </div>
           </CardContent>
@@ -675,7 +728,7 @@ export default function ReparacionesPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRepairs.map((repair) => {
-            const isDelivered = repair.status === "entregado"
+            const isFinalized = isTerminalRepairStatus(repair.status)
             const totalCost = Number(repair.cost) || 0
             const depositAmt = Number(repair.deposit) || 0
             const pendingAmt = repair.pendingBalance !== undefined ? Number(repair.pendingBalance) : Math.max(0, totalCost - depositAmt)
@@ -721,7 +774,7 @@ export default function ReparacionesPage() {
                     {/* Change Status Dropdown */}
                     <Select
                       value={repair.status || "recibido"}
-                      disabled={!canEditRepairs || isDelivered}
+                      disabled={!canEditRepairs || isFinalized}
                       onValueChange={(val) => handleStatusChange(repair.id, val)}
                     >
                       <SelectTrigger className="h-7 text-[11px] font-bold px-2 w-auto border-none shadow-none bg-gray-100 dark:bg-gray-800">
@@ -823,7 +876,7 @@ export default function ReparacionesPage() {
                       <span className="truncate">WhatsApp</span>
                     </Button>
 
-                    {!isDelivered && canAddRepairs && (
+                    {!isFinalized && canAddRepairs && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -864,7 +917,7 @@ export default function ReparacionesPage() {
                       <span className="truncate">Etiqueta</span>
                     </Button>
 
-                    {!isDelivered && (
+                    {!isFinalized && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -877,7 +930,7 @@ export default function ReparacionesPage() {
                       </Button>
                     )}
 
-                    {isDelivered && (
+                    {isFinalized && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -905,7 +958,7 @@ export default function ReparacionesPage() {
                       </Button>
                     )}
 
-                    {!isDelivered && canEditRepairs && (
+                    {!isFinalized && canEditRepairs && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -918,7 +971,7 @@ export default function ReparacionesPage() {
                       </Button>
                     )}
 
-                    {!isDelivered && canDeleteRepairs && (
+                    {!isFinalized && canDeleteRepairs && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -1000,7 +1053,7 @@ export default function ReparacionesPage() {
               <span className="text-sm font-semibold text-slate-700">Estado de la orden</span>
               <Select
                 value={scanRepair.status || "recibido"}
-                disabled={scanRepair.status === "entregado"}
+                disabled={isTerminalRepairStatus(scanRepair.status)}
                 onValueChange={(value) => handleStatusChange(scanRepair.id, value)}
               >
                 <SelectTrigger className="w-[210px]">

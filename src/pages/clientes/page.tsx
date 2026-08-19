@@ -2313,6 +2313,7 @@ export default function CustomersPage() {
                           <TableHead>Fecha</TableHead>
                           <TableHead>Factura</TableHead>
                           <TableHead>Monto</TableHead>
+                          <TableHead>Método</TableHead>
                           <TableHead>Deuda Restante</TableHead>
                           <TableHead className="text-right">Acciones</TableHead>
                         </TableRow>
@@ -2339,6 +2340,13 @@ export default function CustomersPage() {
                               </div>
                             </TableCell>
                             <TableCell className="font-medium text-green-600">${payment.amount.toLocaleString()}</TableCell>
+                            <TableCell>
+                              {payment.paymentMethod === "card"
+                                ? "Tarjeta"
+                                : payment.paymentMethod === "transfer"
+                                  ? "Transferencia"
+                                  : "Efectivo"}
+                            </TableCell>
                             <TableCell>${payment.remainingDebt.toLocaleString()}</TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-2">
@@ -2419,6 +2427,16 @@ export default function CustomersPage() {
                             )}
 
                             <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                              <div className="rounded-md bg-muted p-2">
+                                <div className="text-xs text-muted-foreground">Método</div>
+                                <div className="font-medium">
+                                  {payment.paymentMethod === "card"
+                                    ? "Tarjeta"
+                                    : payment.paymentMethod === "transfer"
+                                      ? "Transferencia"
+                                      : "Efectivo"}
+                                </div>
+                              </div>
                               <div className="rounded-md bg-muted p-2">
                                 <div className="text-xs text-muted-foreground">Deuda restante</div>
                                 <div className="font-medium">${payment.remainingDebt.toLocaleString()}</div>
