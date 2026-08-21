@@ -659,14 +659,18 @@ export function RepairDialog({
     const deviceFull = formatDeviceName(brand, model, createdRepairData?.device || editingRepair?.device) || "su equipo"
     const deviceWithColor = color.trim() ? `${deviceFull} (${color.trim()})` : deviceFull
     const imeiLine = imei.trim() ? `IMEI: ${imei.trim()}\n` : ""
-    const formattedCost = `$${estimatedCostNum.toFixed(2)}`
-    const formattedDeposit = `$${depositNum.toFixed(2)}`
-    const formattedPending = `$${pendingBalance.toFixed(2)}`
+    const formatWhatsappAmount = (amount: number) => `$${amount.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`
+    const formattedCost = formatWhatsappAmount(estimatedCostNum)
+    const formattedDeposit = formatWhatsappAmount(depositNum)
+    const formattedPending = formatWhatsappAmount(pendingBalance)
 
     const branding = await getTenantBranding(currentUser?.ownerAdminId)
     const companyName = (branding.businessName || "ARKHAM").toUpperCase()
 
-    const message = `🛠️ ${companyName} - RECEPCIÓN DE EQUIPO\n\nEstimado/a ${clientName || "Cliente"}, confirmamos el ingreso de su equipo a nuestro taller:\n\nOrden N°: ${ticketNumber}\nEquipo: ${deviceWithColor}\n${imeiLine}Falla Reportada: ${issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${finalServiceType || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nLe mantendremos informado sobre el avance. ¡Gracias por confiar en nosotros!`
+    const message = `🛠️ ${companyName} - RECEPCIÓN DE EQUIPO\n\nEstimado/a ${clientName || "Cliente"}, confirmamos el ingreso de su equipo a nuestro taller:\n\nOrden N°: ${ticketNumber}\nEquipo: ${deviceWithColor}\n${imeiLine}Falla Reportada: ${issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${finalServiceType || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nGracias por preferirnos.`
 
     const res = await sendWhatsappBotMessage({
       phone: targetPhone,

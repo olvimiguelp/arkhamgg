@@ -200,7 +200,7 @@ export function UnexpectedFaultDialog({
       `¿Acepta la realización de este servicio adicional para proceder? Por favor respóndanos con:\n` +
       `1️⃣ *"SÍ, AUTORIZO"* para incluir el cambio.\n` +
       `2️⃣ *"NO"* para mantener solo el trabajo inicial.\n\n` +
-      `Quedamos a su espera para continuar. ¡Gracias por confiar en nosotros!`
+      `Gracias por preferirnos.`
     )
   }
 

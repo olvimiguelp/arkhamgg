@@ -364,18 +364,22 @@ export default function ReparacionesPage() {
     const deviceFull = formatDeviceName(repair.brand, repair.model, repair.device) || "su equipo"
     const deviceWithColor = repair.color?.trim() ? `${deviceFull} (${repair.color.trim()})` : deviceFull
     const imeiLine = repair.imei?.trim() ? `IMEI: ${repair.imei.trim()}\n` : ""
-    const formattedCost = `$${totalCost.toFixed(2)}`
-    const formattedDeposit = `$${depositAmt.toFixed(2)}`
-    const formattedPending = `$${pendingAmt.toFixed(2)}`
+    const formatWhatsappAmount = (amount: number) => `$${amount.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`
+    const formattedCost = formatWhatsappAmount(totalCost)
+    const formattedDeposit = formatWhatsappAmount(depositAmt)
+    const formattedPending = formatWhatsappAmount(pendingAmt)
 
     const branding = await getTenantBranding(currentUser?.ownerAdminId)
     const companyName = (branding.businessName || "ARKHAM").toUpperCase()
 
     let message = ""
     if (repair.status === "recibido" || !repair.status) {
-      message = `🛠️ ${companyName} - RECEPCIÓN DE EQUIPO\n\nEstimado/a ${repair.client || "Cliente"}, confirmamos el ingreso de su equipo a nuestro taller:\n\nOrden N°: ${ticketNumber}\nEquipo: ${deviceWithColor}\n${imeiLine}Falla Reportada: ${repair.issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${repair.type || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nLe mantendremos informado sobre el avance. ¡Gracias por confiar en nosotros!`
+      message = `🛠️ ${companyName} - RECEPCIÓN DE EQUIPO\n\nEstimado/a ${repair.client || "Cliente"}, confirmamos el ingreso de su equipo a nuestro taller:\n\nOrden N°: ${ticketNumber}\nEquipo: ${deviceWithColor}\n${imeiLine}Falla Reportada: ${repair.issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${repair.type || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nGracias por preferirnos.`
     } else {
-      message = `🛠️ ${companyName} - ACTUALIZACIÓN DE ORDEN\n\nEstimado/a ${repair.client || "Cliente"}, le informamos que su equipo ${deviceWithColor} (Orden N°: ${ticketNumber}) se encuentra en estado: *${statusLabel}*.\n\nFalla Reportada: ${repair.issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${repair.type || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nLe mantendremos informado sobre el avance. ¡Gracias por confiar en nosotros!`
+      message = `🛠️ ${companyName} - ACTUALIZACIÓN DE ORDEN\n\nEstimado/a ${repair.client || "Cliente"}, le informamos que su equipo ${deviceWithColor} (Orden N°: ${ticketNumber}) se encuentra en estado: *${statusLabel}*.\n\nFalla Reportada: ${repair.issue || "Diagnóstico / Revisión"}\nServicio a Realizar: ${repair.type || "Reparación General"}\nPresupuesto Estimado: ${formattedCost}\nAbono Recibido: ${formattedDeposit}\nSaldo Pendiente: ${formattedPending}\n\nGracias por preferirnos.`
     }
 
     const res = await sendWhatsappBotMessage({
