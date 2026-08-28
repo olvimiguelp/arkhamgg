@@ -243,16 +243,12 @@ export default function EmpleadosPage() {
         .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
       
-      // Create expiration time: 1 hour from now
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-      
       const { error } = await createClient().from("catalog_shares").insert({
         token,
         owner_admin_id: ownerAdminId,
         product_ids: productIds,
         price_mode: priceMode,
         business_name: adminContact?.name || "Catálogo de productos",
-        expires_at: expiresAt,
         active: true,
       })
       if (error) throw error

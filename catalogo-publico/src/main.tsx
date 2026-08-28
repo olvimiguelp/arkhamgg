@@ -46,13 +46,13 @@ function CatalogoPublico() {
       try {
         const { data: share, error: shareError } = await supabase
           .from("catalog_shares")
-          .select("business_name, price_mode, active, expires_at")
+          .select("business_name, price_mode, active")
           .eq("token", token)
           .maybeSingle()
 
         if (shareError) throw shareError
-        if (!share || !share.active || (share.expires_at && new Date(share.expires_at) < new Date())) {
-          setMessage("Este enlace no es válido o ha vencido.")
+        if (!share || !share.active) {
+          setMessage("Este enlace no es válido o está desactivado.")
           return
         }
 

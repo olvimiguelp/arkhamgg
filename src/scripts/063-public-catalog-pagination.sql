@@ -24,8 +24,6 @@ SET search_path = public
 AS $$
 DECLARE
   share_row public.catalog_shares%ROWTYPE;
-  safe_limit INTEGER := GREATEST(COALESCE(p_limit, 10000), 1);
-  safe_offset INTEGER := GREATEST(COALESCE(p_offset, 0), 0);
 BEGIN
   SELECT * INTO share_row
   FROM public.catalog_shares
@@ -55,7 +53,7 @@ BEGIN
     COUNT(*) OVER ()
   FROM catalog_products p
   ORDER BY p.name, p.id
-  LIMIT safe_limit OFFSET safe_offset;
+  ;
 END;
 $$;
 

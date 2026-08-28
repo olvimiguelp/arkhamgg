@@ -3446,6 +3446,9 @@ ALTER TABLE public.catalog_shares ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "public catalog shares access" ON public.catalog_shares;
 CREATE POLICY "public catalog shares access" ON public.catalog_shares FOR ALL USING (true) WITH CHECK (true);
 
+-- Los enlaces del catálogo público no vencen; solo se desactivan manualmente.
+UPDATE public.catalog_shares SET expires_at = NULL WHERE expires_at IS NOT NULL;
+
 CREATE OR REPLACE FUNCTION public.submit_catalog_order(
   p_token TEXT, p_customer_name TEXT, p_customer_phone TEXT, p_items JSONB
 ) RETURNS UUID LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
@@ -3628,8 +3631,6 @@ SET search_path = public
 AS $$
 DECLARE
   share_row public.catalog_shares%ROWTYPE;
-  safe_limit INTEGER := GREATEST(COALESCE(p_limit, 10000), 1);
-  safe_offset INTEGER := GREATEST(COALESCE(p_offset, 0), 0);
 BEGIN
   SELECT * INTO share_row
   FROM public.catalog_shares
@@ -3659,7 +3660,7 @@ BEGIN
     COUNT(*) OVER ()
   FROM catalog_products p
   ORDER BY p.name, p.id
-  LIMIT safe_limit OFFSET safe_offset;
+  ;
 END;
 $$;
 
