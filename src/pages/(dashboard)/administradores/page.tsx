@@ -286,6 +286,7 @@ export default function AdministradoresPage() {
                   <th className="text-left p-4 font-semibold text-foreground">Administrador</th>
                   <th className="text-left p-4 font-semibold text-foreground">Empresa</th>
                   <th className="text-left p-4 font-semibold text-foreground">Empleados</th>
+                  <th className="text-left p-4 font-semibold text-foreground">Fecha de ingreso</th>
                   <th className="text-left p-4 font-semibold text-foreground">Ultimo acceso</th>
                   <th className="text-left p-4 font-semibold text-foreground">Estado</th>
                   <th className="text-right p-4 font-semibold text-foreground">Acciones</th>
@@ -336,6 +337,12 @@ export default function AdministradoresPage() {
                         <div className="flex items-center gap-2">
                           <Users className="h-4 w-4 text-muted-foreground" />
                           <span className="font-medium text-foreground">{employeeCount}</span>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Calendar className="h-4 w-4" />
+                          <span>{formatDate(admin.createdAt)}</span>
                         </div>
                       </td>
                       <td className="p-4">
