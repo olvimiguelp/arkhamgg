@@ -238,10 +238,7 @@ export default function EmpleadosPage() {
         ? systemConfig.public_catalog_url
         : String(systemConfig?.public_catalog_url?.url || "")
       const token = crypto.randomUUID().replaceAll("-", "")
-      const catalogProducts = products.filter((product) => {
-        if (product.stock <= 0 || product.boxNumber) return false
-        return priceMode === "normal" || Number(product.wholesalePrice) > 0
-      })
+      const catalogProducts = products.filter((product) => !product.boxNumber)
       const productIds = catalogProducts
         .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
