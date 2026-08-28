@@ -24,7 +24,7 @@ SET search_path = public
 AS $$
 DECLARE
   share_row public.catalog_shares%ROWTYPE;
-  safe_limit INTEGER := LEAST(GREATEST(COALESCE(p_limit, 20), 1), 20);
+  safe_limit INTEGER := GREATEST(COALESCE(p_limit, 10000), 1);
   safe_offset INTEGER := GREATEST(COALESCE(p_offset, 0), 0);
 BEGIN
   SELECT * INTO share_row
@@ -42,7 +42,6 @@ BEGIN
     SELECT p.*
     FROM public.products p
     WHERE p.owner_admin_id = share_row.owner_admin_id
-      AND p.id = ANY(share_row.product_ids)
       AND p.stock > 0
       AND (CASE WHEN share_row.price_mode = 'wholesale' THEN p.wholesale_price ELSE p.sell_price END) > 0
       AND (NULLIF(TRIM(p_search), '') IS NULL
@@ -88,7 +87,6 @@ BEGIN
   SELECT DISTINCT p.category
   FROM public.products p
   WHERE p.owner_admin_id = share_row.owner_admin_id
-    AND p.id = ANY(share_row.product_ids)
     AND NULLIF(TRIM(p.category), '') IS NOT NULL
   ORDER BY p.category;
 END;

@@ -19,14 +19,13 @@ type Line = Product & { quantity: number }
 const money = (value: number) =>
   new Intl.NumberFormat("es-DO", { minimumFractionDigits: 2 }).format(value)
 
-const PRODUCTS_PER_PAGE = 20
+const PRODUCTS_PER_PAGE = 10000
 
 function CatalogoPublico() {
   const token = new URLSearchParams(window.location.search).get("token") || ""
   const supabase = useMemo(() => createClient(), [])
   const [business, setBusiness] = useState("Catálogo de productos")
   const [products, setProducts] = useState<Product[]>([])
-  const [totalProducts, setTotalProducts] = useState(0)
   const [catalogConfig, setCatalogConfig] = useState<{ priceMode: string } | null>(null)
   const [cart, setCart] = useState<Line[]>([])
   const [name, setName] = useState("")
@@ -41,7 +40,6 @@ function CatalogoPublico() {
   const [categories, setCategories] = useState<string[]>([])
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [searchTerm, setSearchTerm] = useState("")
-  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     void (async () => {
@@ -92,7 +90,7 @@ function CatalogoPublico() {
         const { data, error } = await supabase.rpc("get_public_catalog_products", {
           p_token: token,
           p_limit: PRODUCTS_PER_PAGE,
-          p_offset: (currentPage - 1) * PRODUCTS_PER_PAGE,
+          p_offset: 0,
           p_search: searchTerm.trim() || null,
           p_category: selectedCategory === "all" ? null : selectedCategory,
         })
@@ -100,7 +98,6 @@ function CatalogoPublico() {
         if (cancelled) return
         const pageProducts = (data || []) as (Product & { total_count?: number })[]
         setProducts(pageProducts)
-        setTotalProducts(Number(pageProducts[0]?.total_count || 0))
         setMessage("")
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "No se pudo cargar el catálogo.")
@@ -114,7 +111,7 @@ function CatalogoPublico() {
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [catalogConfig, currentPage, searchTerm, selectedCategory, supabase, token])
+  }, [catalogConfig, searchTerm, selectedCategory, supabase, token])
 
   const add = (product: Product) =>
     setCart((current) => {
@@ -132,12 +129,6 @@ function CatalogoPublico() {
   const remove = (id: string) => setCart((current) => current.filter((item) => item.id !== id))
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
-  const totalPages = Math.max(1, Math.ceil(totalProducts / PRODUCTS_PER_PAGE))
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [searchTerm, selectedCategory])
-
   const send = async () => {
     setSending(true)
     setMessage("")
@@ -210,11 +201,6 @@ function CatalogoPublico() {
           </section>
         ) : <div className="empty-card"><span>⌁</span><h3>{products.length ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{products.length ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
 
-        {totalProducts > PRODUCTS_PER_PAGE && <nav className="pagination" aria-label="Paginación de productos">
-          <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={currentPage === 1}>Anterior</button>
-          <span>Página {currentPage} de {totalPages}</span>
-          <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={currentPage === totalPages}>Siguiente</button>
-        </nav>}
       </main>
 
       <button className="cart-fab" onClick={() => setCartOpen(true)} aria-label="Abrir carrito de compra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L20.5 8H6" /><path d="M9 20h.01M17 20h.01" /></svg>{itemCount > 0 && <span className="fab-count">{itemCount}</span>}</button>
