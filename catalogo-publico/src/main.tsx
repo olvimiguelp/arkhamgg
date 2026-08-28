@@ -38,6 +38,7 @@ function CatalogoPublico() {
   const [done, setDone] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
+  const [categories, setCategories] = useState<string[]>([])
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
@@ -77,6 +78,17 @@ function CatalogoPublico() {
 
     void (async () => {
       try {
+        const { data: categoryData, error: categoryError } = await supabase.rpc("get_public_catalog_categories", {
+          p_token: token,
+        })
+        if (categoryError) throw categoryError
+        if (cancelled) return
+        setCategories(
+          (categoryData || [])
+            .map((row) => row.category)
+            .filter((category): category is string => typeof category === "string" && Boolean(category.trim())),
+        )
+
         const { data, error } = await supabase.rpc("get_public_catalog_products", {
           p_token: token,
           p_limit: PRODUCTS_PER_PAGE,
@@ -120,10 +132,6 @@ function CatalogoPublico() {
   const remove = (id: string) => setCart((current) => current.filter((item) => item.id !== id))
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
-  const categories = useMemo(
-    () => Array.from(new Set(products.map((product) => product.category).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [products],
-  )
   const totalPages = Math.max(1, Math.ceil(totalProducts / PRODUCTS_PER_PAGE))
 
   useEffect(() => {
