@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { 
   Plus, Search, User, MoreHorizontal, Eye, Pencil, Lock, Unlock, Trash2, 
-  Building2, Mail, Phone, Calendar, Shield, Clock, X, Check, Users, CreditCard, Sparkles, Save
+  Building2, Mail, Phone, Calendar, Shield, X, Check, Users, CreditCard, Sparkles, Save
 } from "lucide-react"
 import type { Admin, UserStatus, Subscription, SubscriptionPlan, Business } from "@super_admin/lib/types"
 import { PERMISSIONS, SUBSCRIPTION_PLANS } from "@super_admin/lib/types"
@@ -125,17 +125,6 @@ export default function AdministradoresPage() {
       year: "numeric",
       month: "short",
       day: "numeric",
-    })
-  }
-
-  const formatDateTime = (date?: Date) => {
-    if (!date) return "Nunca"
-    return new Date(date).toLocaleString("es-ES", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
     })
   }
 
@@ -287,7 +276,6 @@ export default function AdministradoresPage() {
                   <th className="text-left p-4 font-semibold text-foreground">Empresa</th>
                   <th className="text-left p-4 font-semibold text-foreground">Empleados</th>
                   <th className="text-left p-4 font-semibold text-foreground">Fecha de ingreso</th>
-                  <th className="text-left p-4 font-semibold text-foreground">Ultimo acceso</th>
                   <th className="text-left p-4 font-semibold text-foreground">Estado</th>
                   <th className="text-right p-4 font-semibold text-foreground">Acciones</th>
                 </tr>
@@ -343,12 +331,6 @@ export default function AdministradoresPage() {
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Calendar className="h-4 w-4" />
                           <span>{formatDate(admin.createdAt)}</span>
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Clock className="h-4 w-4" />
-                          <span>{formatDateTime(admin.lastLogin)}</span>
                         </div>
                       </td>
                       <td className="p-4">

@@ -20,6 +20,7 @@ import {
   ReceiptText,
   Share2,
   Copy,
+  ImageDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -49,9 +50,9 @@ import { formatCurrency } from "@/lib/utils"
 import { useDraggableScroll } from "@/hooks/use-draggable-scroll"
 import { normalizeAlmacenBoxNumber } from "@/lib/almacen"
 import { normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
-import { uploadProductImageToStorage } from "@/lib/product-image-storage"
+import { createProductImageThumbnailFromUrl, deleteProductImageFromStorage, isProductImageStorageUrl, uploadProductImageToStorage } from "@/lib/product-image-storage"
 import { getTenantBranding } from "@/lib/tenant-branding"
-import { createClient } from "@/lib/supabase/client"
+import { getOrCreatePublicCatalogShare } from "@/lib/public-catalog-share"
 
 // Reusing the Product interface and Store logic since it's the same data source
 // In a real app, this might be a distinct view or filter of the inventory
@@ -61,6 +62,7 @@ export interface Product {
   name: string
   category: string
   imageUrl?: string
+  imageThumbnailUrl?: string
   stock: number
   minStock: number
   buyPrice: number
@@ -71,6 +73,15 @@ export interface Product {
   capacity?: string
   imei?: string
 }
+
+type ThumbnailBackfillProgress = {
+  total: number
+  processed: number
+  completed: number
+  failed: number
+}
+
+const LEGACY_THUMBNAIL_BATCH_SIZE = 10
 
 type ProductInvoiceLink = {
   id: string
@@ -120,6 +131,14 @@ export default function ProductsPage() {
   const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
   const [publicCatalogLink, setPublicCatalogLink] = useState("")
   const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
+  const [isThumbnailBackfillDialogOpen, setIsThumbnailBackfillDialogOpen] = useState(false)
+  const [isThumbnailBackfillRunning, setIsThumbnailBackfillRunning] = useState(false)
+  const [thumbnailBackfillProgress, setThumbnailBackfillProgress] = useState<ThumbnailBackfillProgress>({
+    total: 0,
+    processed: 0,
+    completed: 0,
+    failed: 0,
+  })
   const [isInventoryDialogOpen, setIsInventoryDialogOpen] = useState(false)
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false)
   const [pdfReportType, setPdfReportType] = useState<"low" | "stop" | "total">("low")
@@ -160,6 +179,13 @@ export default function ProductsPage() {
     if (explicitSource) return explicitSource === "products"
     return !normalizeAlmacenBoxNumber((product as { boxNumber?: string }).boxNumber)
   })
+  const productsMissingThumbnails = catalogProducts.filter((product) =>
+    Boolean(product.imageUrl) && !product.imageThumbnailUrl && isProductImageStorageUrl(product.imageUrl),
+  )
+  const externalImagesMissingThumbnails = catalogProducts.filter((product) =>
+    Boolean(product.imageUrl) && !product.imageThumbnailUrl && !isProductImageStorageUrl(product.imageUrl),
+  )
+  const imagesMissingThumbnailsCount = productsMissingThumbnails.length + externalImagesMissingThumbnails.length
 
   const totalInventory = catalogProducts.reduce((acc, product) => acc + product.stock, 0)
   const lowStockCount = catalogProducts.filter((product) => product.stock <= (product.minStock || 0)).length
@@ -171,17 +197,15 @@ export default function ProductsPage() {
     if (!ownerAdminId) return
     setIsCreatingPublicCatalog(true)
     try {
-      const token = crypto.randomUUID().replaceAll("-", "")
       const productIds = catalogProducts
         .map((product) => String((product as Product & { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
-      const { error } = await createClient().from("catalog_shares").insert({
-        token,
-        owner_admin_id: ownerAdminId,
-        product_ids: productIds,
-        business_name: tenantBusinessName,
+      const token = await getOrCreatePublicCatalogShare({
+        ownerAdminId,
+        priceMode: "normal",
+        productIds,
+        businessName: tenantBusinessName,
       })
-      if (error) throw error
       const link = `${window.location.origin}/catalogo-publico/?token=${token}`
       setPublicCatalogLink(link)
       setIsPublicCatalogDialogOpen(true)
@@ -189,6 +213,68 @@ export default function ProductsPage() {
       console.error("Error creating public catalog link:", error)
       toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
     } finally { setIsCreatingPublicCatalog(false) }
+  }
+
+  const createLegacyImageThumbnails = async () => {
+    if (!canEditProducts || isThumbnailBackfillRunning) return
+
+    const batch = productsMissingThumbnails.slice(0, LEGACY_THUMBNAIL_BATCH_SIZE)
+    if (!batch.length) {
+      toast({ title: "Imágenes optimizadas", description: "No quedan imágenes antiguas por procesar." })
+      return
+    }
+
+    setIsThumbnailBackfillRunning(true)
+    setThumbnailBackfillProgress({ total: batch.length, processed: 0, completed: 0, failed: 0 })
+    let completed = 0
+    let failed = 0
+
+    for (let index = 0; index < batch.length; index += 1) {
+      const product = batch[index]
+      try {
+        const sourceId = String((product as Product & { sourceId?: string }).sourceId || product.id).replace(/^products::/, "")
+        const result = await createProductImageThumbnailFromUrl(sourceId, product.imageUrl || "")
+        if (!result.success || !result.thumbnailUrl) {
+          throw new Error(result.error || "No se pudo crear la miniatura")
+        }
+
+        try {
+          await updateProduct(product.id, { imageThumbnailUrl: result.thumbnailUrl })
+        } catch (error) {
+          // Si la base de datos rechaza la actualización no dejamos una
+          // miniatura sin referencia consumiendo almacenamiento.
+          await deleteProductImageFromStorage(result.storagePath || "")
+          throw error
+        }
+        completed += 1
+      } catch (error) {
+        failed += 1
+        console.error("No se pudo optimizar la imagen existente:", product.id, error)
+      } finally {
+        setThumbnailBackfillProgress({
+          total: batch.length,
+          processed: index + 1,
+          completed,
+          failed,
+        })
+      }
+    }
+
+    setIsThumbnailBackfillRunning(false)
+    if (failed) {
+      toast({
+        title: `Se optimizaron ${completed} imágenes`,
+        description: `${failed} no se pudieron procesar. Revisa la consola y vuelve a intentar ese lote.`,
+        variant: "destructive",
+      })
+    } else {
+      toast({
+        title: `Se optimizaron ${completed} imágenes`,
+        description: productsMissingThumbnails.length > batch.length
+          ? "Puedes ejecutar el siguiente lote cuando quieras."
+          : "El catálogo ya usará miniaturas ligeras para estas imágenes.",
+      })
+    }
   }
 
   const [formData, setFormData] = useState({
@@ -550,6 +636,7 @@ export default function ProductsPage() {
 
     try {
       let uploadedImageUrl: string | undefined = undefined
+      let uploadedImageThumbnailUrl: string | undefined = undefined
 
       if (imageFile) {
       const uploadId = editingId ? (catalogProducts.find((p) => p.id === editingId)?.sourceId ?? String(Date.now())) : String(Date.now())
@@ -559,6 +646,7 @@ export default function ProductsPage() {
         return
       }
       uploadedImageUrl = res.publicUrl
+      uploadedImageThumbnailUrl = res.thumbnailUrl
     }
 
       if (editingId) {
@@ -577,6 +665,7 @@ export default function ProductsPage() {
         capacity: formData.capacity || undefined,
         imei: formData.imei || undefined,
         imageUrl: uploadedImageUrl || catalogProducts.find((p) => p.id === editingId)?.imageUrl,
+        imageThumbnailUrl: uploadedImageThumbnailUrl || catalogProducts.find((p) => p.id === editingId)?.imageThumbnailUrl,
       }
       await updateProduct(editingId, updatedProduct)
       toast({ title: "Producto actualizado", description: "El producto se ha actualizado correctamente" })
@@ -596,6 +685,7 @@ export default function ProductsPage() {
         capacity: formData.capacity || undefined,
         imei: formData.imei || undefined,
         imageUrl: uploadedImageUrl,
+        imageThumbnailUrl: uploadedImageThumbnailUrl,
       }
       const { id, ...productWithoutId } = newProduct
       await addProduct(productWithoutId)
@@ -1154,6 +1244,12 @@ export default function ProductsPage() {
           {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
           Compartir catálogo
         </Button>
+        {canEditProducts && imagesMissingThumbnailsCount > 0 && (
+          <Button variant="outline" onClick={() => setIsThumbnailBackfillDialogOpen(true)} disabled={isThumbnailBackfillRunning} className="w-full min-h-11 sm:w-auto">
+            <ImageDown className="mr-2 h-4 w-4" />
+            {productsMissingThumbnails.length > 0 ? "Optimizar imágenes" : "Revisar imágenes"} ({imagesMissingThumbnailsCount})
+          </Button>
+        )}
         <Button variant="outline" onClick={() => setIsCategoryDialogOpen(true)} className="w-full min-h-11 sm:w-auto">
           <Plus className="mr-2 h-4 w-4" />
           Categorías
@@ -1406,6 +1502,46 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={isThumbnailBackfillDialogOpen} onOpenChange={(open) => {
+        if (!isThumbnailBackfillRunning) setIsThumbnailBackfillDialogOpen(open)
+      }}>
+        <DialogContent className="w-[95vw] max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Optimizar imágenes ya subidas</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              Las fotos antiguas se descargarán una sola vez en este equipo para crear una miniatura WebP de 360 px. El catálogo público usará esa versión ligera en lugar del original.
+            </p>
+            <p>
+              Se procesan como máximo {LEGACY_THUMBNAIL_BATCH_SIZE} por lote para no saturar la conexión. Quedan {productsMissingThumbnails.length} imagen{productsMissingThumbnails.length === 1 ? "" : "es"} por optimizar.
+            </p>
+            {externalImagesMissingThumbnails.length > 0 && (
+              <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                {externalImagesMissingThumbnails.length} imagen{externalImagesMissingThumbnails.length === 1 ? "" : "es"} con URL externa no se puede optimizar automáticamente por seguridad del navegador. Vuelve a subirla desde Editar producto para crear su miniatura.
+              </p>
+            )}
+            {thumbnailBackfillProgress.total > 0 && (
+              <div className="rounded-md border bg-muted/40 p-3 text-foreground">
+                <p className="font-medium">Progreso: {thumbnailBackfillProgress.processed} de {thumbnailBackfillProgress.total}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Correctas: {thumbnailBackfillProgress.completed} · Fallidas: {thumbnailBackfillProgress.failed}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsThumbnailBackfillDialogOpen(false)} disabled={isThumbnailBackfillRunning}>
+              Cerrar
+            </Button>
+            <Button onClick={() => void createLegacyImageThumbnails()} disabled={isThumbnailBackfillRunning || productsMissingThumbnails.length === 0}>
+              {isThumbnailBackfillRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ImageDown className="mr-2 h-4 w-4" />}
+              {isThumbnailBackfillRunning ? "Optimizando..." : `Optimizar ${Math.min(LEGACY_THUMBNAIL_BATCH_SIZE, productsMissingThumbnails.length)} imágenes`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="space-y-3 md:hidden">
         {filteredProducts.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -1417,8 +1553,8 @@ export default function ProductsPage() {
             return (
               <div key={product.id} className="overflow-hidden rounded-lg border bg-background p-3 shadow-sm">
                 <div className="flex items-start gap-3">
-                  {product.imageUrl ? (
-                    <img src={product.imageUrl} alt={product.name} className="h-16 w-16 rounded-md object-cover" />
+                  {product.imageThumbnailUrl || product.imageUrl ? (
+                    <img src={product.imageThumbnailUrl || product.imageUrl} alt={product.name} className="h-16 w-16 rounded-md object-cover" loading="lazy" />
                   ) : (
                     <div className="h-16 w-16 rounded-md bg-muted/40" />
                   )}
@@ -1511,8 +1647,8 @@ export default function ProductsPage() {
                       <TableCell className="font-medium">{product.sku}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          {product.imageUrl ? (
-                            <img src={product.imageUrl} alt={product.name} className="h-8 w-8 object-cover rounded" />
+                          {product.imageThumbnailUrl || product.imageUrl ? (
+                            <img src={product.imageThumbnailUrl || product.imageUrl} alt={product.name} className="h-8 w-8 object-cover rounded" loading="lazy" />
                           ) : (
                             <div className="h-8 w-8 rounded bg-muted/40" />
                           )}

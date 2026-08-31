@@ -42,6 +42,7 @@ export interface Product {
   name: string
   category: string
   imageUrl?: string
+  imageThumbnailUrl?: string
   boxNumber?: string
   stock: number
   minStock: number
@@ -379,6 +380,7 @@ const mapProductFromDB = (rec: any, sourceTable: InventorySourceTable): Product 
     sku: rec.sku != null ? String(rec.sku) : "",
     name: rec.name != null ? String(rec.name) : "",
     imageUrl: typeof rec.image_url === "string" && rec.image_url ? rec.image_url : undefined,
+    imageThumbnailUrl: typeof rec.image_thumbnail_url === "string" && rec.image_thumbnail_url ? rec.image_thumbnail_url : undefined,
     category: rec.category != null ? String(rec.category) : "",
     boxNumber: rec.box_number == null ? undefined : String(rec.box_number),
     stock: Number(rec.stock) || 0,
@@ -2334,6 +2336,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
                   name: product.name,
                   category: product.category,
                   image_url: product.imageUrl || null,
+                  image_thumbnail_url: product.imageThumbnailUrl || null,
                   stock: product.stock,
                   min_stock: product.minStock,
                   buy_price: product.buyPrice,
@@ -2386,6 +2389,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (product.sku !== undefined) updateData.sku = product.sku
       if (product.name !== undefined) updateData.name = product.name
       if (product.imageUrl !== undefined) updateData.image_url = product.imageUrl || null
+      if (targetTable === "products" && product.imageThumbnailUrl !== undefined) updateData.image_thumbnail_url = product.imageThumbnailUrl || null
       if (product.category !== undefined) updateData.category = product.category
       if (product.stock !== undefined) updateData.stock = product.stock
       if (product.minStock !== undefined) updateData.min_stock = product.minStock

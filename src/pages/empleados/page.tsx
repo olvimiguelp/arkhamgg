@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useStore, type Employee } from "@/components/store-context"
-import { createClient } from "@/lib/supabase/client"
 import { useToast } from "@/hooks/use-toast"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -56,6 +55,7 @@ import {
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
 import { getPublicCatalogUrl, savePublicCatalogUrl } from "@/lib/public-catalog-url"
+import { getOrCreatePublicCatalogShare } from "@/lib/public-catalog-share"
 
 const readAccessFlag = (value: any): boolean => {
   if (typeof value === "boolean") return value
@@ -237,21 +237,17 @@ export default function EmpleadosPage() {
       const configuredCatalogUrl = typeof systemConfig?.public_catalog_url === "string"
         ? systemConfig.public_catalog_url
         : String(systemConfig?.public_catalog_url?.url || "")
-      const token = crypto.randomUUID().replaceAll("-", "")
       const catalogProducts = products.filter((product) => !product.boxNumber)
       const productIds = catalogProducts
         .map((product) => String((product as { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
       
-      const { error } = await createClient().from("catalog_shares").insert({
-        token,
-        owner_admin_id: ownerAdminId,
-        product_ids: productIds,
-        price_mode: priceMode,
-        business_name: adminContact?.name || "Catálogo de productos",
-        active: true,
+      const token = await getOrCreatePublicCatalogShare({
+        ownerAdminId,
+        priceMode,
+        productIds,
+        businessName: adminContact?.name || "Catálogo de productos",
       })
-      if (error) throw error
       setPublicCatalogType(priceMode)
       setPublicCatalogLink(getPublicCatalogUrl(token, configuredCatalogUrl))
       setIsPublicCatalogDialogOpen(true)
