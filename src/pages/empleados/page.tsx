@@ -1114,7 +1114,7 @@ export default function EmpleadosPage() {
         <DialogContent className="w-[95vw] max-w-[520px]">
           <DialogHeader>
             <DialogTitle>{publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
-            <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva. ⏱️ Este enlace expirará en 1 hora por seguridad.</DialogDescription>
+            <DialogDescription>Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva. Este enlace es permanente mientras el catálogo permanezca activo.</DialogDescription>
           </DialogHeader>
           <div className="flex gap-2">
             <Input readOnly value={publicCatalogLink} />

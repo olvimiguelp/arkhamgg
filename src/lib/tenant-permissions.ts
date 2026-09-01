@@ -132,7 +132,7 @@ export function dbPermissionsToSuperAdmin(permissions: Record<string, unknown> |
     }
   }
 
-  if (result.size === 0) {
+  if (!permissions) {
     return TENANT_PAGE_PERMISSION_OPTIONS.map((option) => option.superKey)
   }
 
@@ -171,7 +171,6 @@ export function tenantCanAccessMenuItem(
 
   if (currentUser.role === "admin") {
     if (!allowedRoles.includes("admin")) return false
-    if (item.permissionKey === "sales" || item.permissionKey === "employees") return true
     if (!record) return true
     return record.permissions[item.permissionKey] === true
   }

@@ -594,7 +594,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
           salary: 0,
           status: asDbEmployeeStatus(adminStatus),
           permissions:
-            adminData.permissions && adminData.permissions.length > 0
+            adminData.permissions !== undefined
               ? superAdminPermissionsToDb(adminData.permissions)
               : FULL_TENANT_PERMISSIONS,
         })

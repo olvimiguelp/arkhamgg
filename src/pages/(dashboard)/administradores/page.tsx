@@ -770,7 +770,7 @@ function AdminFormModal({
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [permissionsError, setPermissionsError] = useState<string | null>(null)
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(() =>
-    admin?.permissions?.length
+    admin?.permissions
       ? admin.permissions
       : TENANT_PAGE_PERMISSION_OPTIONS.map((option) => option.superKey),
   )
@@ -808,10 +808,6 @@ function AdminFormModal({
     if (!admin && (!password || password.trim().length === 0)) {
       setPasswordError("La contraseña es requerida")
       setEmailError(null)
-      return
-    }
-    if (selectedPermissions.length === 0) {
-      setPermissionsError("Seleccione al menos una pagina habilitada para el administrador.")
       return
     }
     setPermissionsError(null)

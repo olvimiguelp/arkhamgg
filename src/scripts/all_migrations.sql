@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-08-30 20:10:03 -04:00
+-- Generado: 2026-08-31 19:57:57 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -3936,10 +3936,20 @@ REVOKE ALL ON FUNCTION public.submit_catalog_order(TEXT, TEXT, TEXT, JSONB) FROM
 GRANT EXECUTE ON FUNCTION public.submit_catalog_order(TEXT, TEXT, TEXT, JSONB)
   TO anon, authenticated;
 
+-- ====================================================
+-- Source: 065-public-catalog-permanent.sql
+-- ====================================================
+
+-- Los enlaces del catálogo público no vencen. Solo dejan de funcionar
+-- cuando se marcan explícitamente como inactivos.
+UPDATE public.catalog_shares
+SET expires_at = NULL
+WHERE expires_at IS NOT NULL;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (67):
+-- Archivos concatenados (68):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -4007,3 +4017,4 @@ GRANT EXECUTE ON FUNCTION public.submit_catalog_order(TEXT, TEXT, TEXT, JSONB)
 --   - 062-public-catalog-url.sql
 --   - 063-public-catalog-pagination.sql
 --   - 064-public-catalog-egress-optimization.sql
+--   - 065-public-catalog-permanent.sql
