@@ -115,11 +115,6 @@ export function superAdminPermissionsToDb(selected: string[]): Employee["permiss
     permissions.canDelete = true
   }
 
-  if (permissions.products || permissions.almacen) {
-    permissions.inventory = true
-    permissions.purchases = true
-  }
-
   return permissions
 }
 
