@@ -146,7 +146,6 @@ export default function ReportsPage() {
 
     const resolveSaleCost = (sale: (typeof sales)[number], items: (typeof sales)[number]["items"]) => {
       const totalCost = items.reduce((acc, item) => acc + item.buyPrice * item.quantity, 0)
-      if (sale.items.some((item) => item.accountingVersion === 2)) return totalCost
       const saleTotal = Math.max(0, Number(sale.total) || 0)
       const paidRatio = saleTotal > 0 ? resolveSalePaidAmount(sale) / saleTotal : 0
       if (!showOnlyAlmacen) return totalCost * paidRatio
