@@ -945,7 +945,7 @@ const INITIAL_EXPENSES: Expense[] = []
 interface StoreContextType {
   products: Product[]
   searchProducts: (search: string) => Promise<Product[]>
-  loadMoreProducts: () => Promise<number>
+  loadMoreProducts: (source?: "products" | "armacen") => Promise<number>
   sales: Sale[]
   suppliers: Supplier[]
   customers: Customer[]
@@ -1543,18 +1543,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser?.id, isSalesRoute, isTableMissing, markMissingTable, withTenantFilter])
 
-  const loadMoreProducts = useCallback(async () => {
+  const loadMoreProducts = useCallback(async (source: "products" | "armacen" = "products") => {
     if (!currentUser || !isSalesRoute) return 0
 
     const supabase = createClient()
-    const nextProductsQuery = withTenantFilter(
+    const nextProductsQuery = source === "products" ? withTenantFilter(
       supabase
         .from("products")
         .select("*")
         .order("created_at", { ascending: false })
         .range(productsLoadedRef.current, productsLoadedRef.current + 24),
-    )
-    const nextAlmacenQuery = !isTableMissing("armacen")
+    ) : null
+    const nextAlmacenQuery = source === "armacen" && !isTableMissing("armacen")
       ? withTenantFilter(
           supabase
             .from("armacen")
@@ -1565,10 +1565,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       : null
 
     const [productsResult, armacenResult] = await Promise.all([nextProductsQuery, nextAlmacenQuery])
-    if (productsResult.error) throw productsResult.error
+    if (productsResult?.error) throw productsResult.error
     if (armacenResult?.error && !isMissingTableError(armacenResult.error)) throw armacenResult.error
 
-    const newProducts = (productsResult.data || []).map((row: any) => mapProductFromDB(row, "products"))
+    const newProducts = (productsResult?.data || []).map((row: any) => mapProductFromDB(row, "products"))
     const newAlmacenProducts = (armacenResult?.data || []).map((row: any) => mapProductFromDB(row, "armacen"))
     productsLoadedRef.current += newProducts.length
     almacenProductsLoadedRef.current += newAlmacenProducts.length

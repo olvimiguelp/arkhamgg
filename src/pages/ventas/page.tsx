@@ -1491,7 +1491,7 @@ export default function SalesPage() {
 
     setLoadingMoreProducts(true)
     try {
-      const loadedCount = await loadMoreProducts()
+      const loadedCount = await loadMoreProducts(showAlmacenProductsOnly ? "armacen" : "products")
       if (loadedCount === 0) setHasMoreProducts(false)
       else setVisibleProductLimit((current) => current + 25)
     } catch (error) {
