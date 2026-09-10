@@ -28,6 +28,8 @@ export default function SuppliersPage() {
     phone: "",
     email: "",
     address: "",
+    defaultCreditDays: "",
+    defaultLatePenaltyPercent: "0",
   })
   const employeePermissions = employees.find((employee) => employee.email === currentUser?.email)?.permissions
   const canAddSupplier = currentUser?.role === "admin" || Boolean(employeePermissions?.canAdd)
@@ -43,6 +45,8 @@ export default function SuppliersPage() {
       phone: "",
       email: "",
       address: "",
+      defaultCreditDays: "",
+      defaultLatePenaltyPercent: "0",
     })
     setEditingId(null)
   }, [])
@@ -102,6 +106,8 @@ export default function SuppliersPage() {
     if (editingId) {
       const updatedSupplier: Partial<Supplier> = {
         ...formData,
+        defaultCreditDays: formData.defaultCreditDays === "" ? undefined : Number(formData.defaultCreditDays),
+        defaultLatePenaltyPercent: Number(formData.defaultLatePenaltyPercent) || 0,
         tipoEmpresa: "",
         website: "",
       }
@@ -113,6 +119,8 @@ export default function SuppliersPage() {
     } else {
       const newSupplier: Omit<Supplier, "id"> = {
         ...formData,
+        defaultCreditDays: formData.defaultCreditDays === "" ? undefined : Number(formData.defaultCreditDays),
+        defaultLatePenaltyPercent: Number(formData.defaultLatePenaltyPercent) || 0,
         tipoEmpresa: "",
         website: "",
         debt: 0,
@@ -146,6 +154,8 @@ export default function SuppliersPage() {
       phone: supplier.phone,
       email: supplier.email,
       address: supplier.address,
+      defaultCreditDays: supplier.defaultCreditDays?.toString() || "",
+      defaultLatePenaltyPercent: (supplier.defaultLatePenaltyPercent ?? 0).toString(),
     })
     setEditingId(supplier.id)
     setIsDialogOpen(true)
@@ -386,6 +396,17 @@ export default function SuppliersPage() {
                 value={formData.address}
                 onChange={(e) => handleInputChange("address", e.target.value)}
               />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Días de crédito por defecto</Label>
+                <Input type="number" min="0" value={formData.defaultCreditDays} onChange={(e) => handleInputChange("defaultCreditDays", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>% de mora por defecto</Label>
+                <Input type="number" min="0" value={formData.defaultLatePenaltyPercent} onChange={(e) => handleInputChange("defaultLatePenaltyPercent", e.target.value)} />
+              </div>
             </div>
           </div>
           <DialogFooter>

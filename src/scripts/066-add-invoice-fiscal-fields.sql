@@ -1,0 +1,10 @@
+ALTER TABLE purchases
+  ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT,
+  ADD COLUMN IF NOT EXISTS ncf TEXT,
+  ADD COLUMN IF NOT EXISTS itbis NUMERIC(12, 2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS credit_days INTEGER,
+  ADD COLUMN IF NOT EXISTS late_penalty_percent NUMERIC(5, 2) DEFAULT 0;
+
+ALTER TABLE suppliers
+  ADD COLUMN IF NOT EXISTS default_credit_days INTEGER,
+  ADD COLUMN IF NOT EXISTS default_late_penalty_percent NUMERIC(5, 2) DEFAULT 0;

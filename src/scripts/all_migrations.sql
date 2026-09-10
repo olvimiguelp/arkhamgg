@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-08-31 19:57:57 -04:00
+-- Generado: 2026-09-09 23:30:46 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -3946,10 +3946,114 @@ UPDATE public.catalog_shares
 SET expires_at = NULL
 WHERE expires_at IS NOT NULL;
 
+-- ====================================================
+-- Source: 066-add-invoice-fiscal-fields.sql
+-- ====================================================
+
+ALTER TABLE purchases
+  ADD COLUMN IF NOT EXISTS supplier_invoice_number TEXT,
+  ADD COLUMN IF NOT EXISTS ncf TEXT,
+  ADD COLUMN IF NOT EXISTS itbis NUMERIC(12, 2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS credit_days INTEGER,
+  ADD COLUMN IF NOT EXISTS late_penalty_percent NUMERIC(5, 2) DEFAULT 0;
+
+ALTER TABLE suppliers
+  ADD COLUMN IF NOT EXISTS default_credit_days INTEGER,
+  ADD COLUMN IF NOT EXISTS default_late_penalty_percent NUMERIC(5, 2) DEFAULT 0;
+
+-- ====================================================
+-- Source: 067-create-accounts-payable-table.sql
+-- ====================================================
+
+CREATE TABLE IF NOT EXISTS public.accounts_payable (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_admin_id UUID NOT NULL REFERENCES public.employees(id),
+  expense_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  category TEXT NOT NULL CHECK (category IN ('mercancia', 'nomina', 'servicios', 'alquiler', 'mantenimiento', 'activos', 'transporte', 'publicidad', 'seguros', 'financieros', 'impuestos', 'otros')),
+  concept TEXT NOT NULL,
+  supplier_id UUID REFERENCES public.suppliers(id),
+  supplier_name_freetext TEXT,
+  supplier_rnc_freetext TEXT,
+  has_ncf BOOLEAN NOT NULL DEFAULT FALSE,
+  ncf TEXT,
+  amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  amount_includes_itbis BOOLEAN NOT NULL DEFAULT TRUE,
+  itbis_rate NUMERIC(5,2) NOT NULL DEFAULT 18,
+  itbis_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  base_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  total_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  payment_type TEXT NOT NULL DEFAULT 'credito' CHECK (payment_type IN ('credito', 'contado')),
+  due_date TIMESTAMPTZ,
+  amount_paid NUMERIC(12,2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pendiente' CHECK (status IN ('pendiente', 'parcial', 'pagado')),
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS accounts_payable_owner_admin_id_idx ON public.accounts_payable(owner_admin_id);
+CREATE INDEX IF NOT EXISTS accounts_payable_supplier_id_idx ON public.accounts_payable(supplier_id);
+CREATE INDEX IF NOT EXISTS accounts_payable_due_date_idx ON public.accounts_payable(due_date);
+
+ALTER TABLE public.accounts_payable ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "accounts_payable_tenant_access" ON public.accounts_payable;
+CREATE POLICY "accounts_payable_tenant_access" ON public.accounts_payable
+  FOR ALL USING (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL)
+  WITH CHECK (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL);
+
+DROP TRIGGER IF EXISTS accounts_payable_updated_at ON public.accounts_payable;
+CREATE TRIGGER accounts_payable_updated_at
+  BEFORE UPDATE ON public.accounts_payable
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+CREATE TABLE IF NOT EXISTS public.accounts_payable_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_admin_id UUID NOT NULL REFERENCES public.employees(id),
+  account_payable_id UUID NOT NULL REFERENCES public.accounts_payable(id) ON DELETE CASCADE,
+  amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  payment_method TEXT NOT NULL DEFAULT 'transfer',
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS accounts_payable_payments_account_id_idx ON public.accounts_payable_payments(account_payable_id);
+ALTER TABLE public.accounts_payable_payments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "accounts_payable_payments_tenant_access" ON public.accounts_payable_payments;
+CREATE POLICY "accounts_payable_payments_tenant_access" ON public.accounts_payable_payments
+  FOR ALL USING (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL)
+  WITH CHECK (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL);
+
+-- ====================================================
+-- Source: 068-update-accounts-payable-categories.sql
+-- ====================================================
+
+ALTER TABLE public.accounts_payable
+  DROP CONSTRAINT IF EXISTS accounts_payable_category_check;
+
+ALTER TABLE public.accounts_payable
+  ADD CONSTRAINT accounts_payable_category_check
+  CHECK (category IN ('mercancia', 'nomina', 'servicios', 'alquiler', 'mantenimiento', 'activos', 'transporte', 'publicidad', 'seguros', 'financieros', 'impuestos', 'otros'));
+
+-- ====================================================
+-- Source: 069-fix-accounts-payable-rls.sql
+-- ====================================================
+
+ALTER TABLE public.accounts_payable ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "accounts_payable_tenant_access" ON public.accounts_payable;
+CREATE POLICY "accounts_payable_tenant_access" ON public.accounts_payable
+  FOR ALL USING (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL)
+  WITH CHECK (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL);
+
+ALTER TABLE public.accounts_payable_payments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "accounts_payable_payments_tenant_access" ON public.accounts_payable_payments;
+CREATE POLICY "accounts_payable_payments_tenant_access" ON public.accounts_payable_payments
+  FOR ALL USING (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL)
+  WITH CHECK (owner_admin_id = public.current_tenant_id() OR public.current_tenant_id() IS NULL);
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (68):
+-- Archivos concatenados (72):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -4018,3 +4122,7 @@ WHERE expires_at IS NOT NULL;
 --   - 063-public-catalog-pagination.sql
 --   - 064-public-catalog-egress-optimization.sql
 --   - 065-public-catalog-permanent.sql
+--   - 066-add-invoice-fiscal-fields.sql
+--   - 067-create-accounts-payable-table.sql
+--   - 068-update-accounts-payable-categories.sql
+--   - 069-fix-accounts-payable-rls.sql

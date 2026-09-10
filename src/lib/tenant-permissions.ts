@@ -24,6 +24,7 @@ export const TENANT_PAGE_PERMISSION_OPTIONS: TenantPagePermissionOption[] = [
   { dbKey: "clienteAlmacen", superKey: "manage_warehouse_customers", label: "Cliente Almacen", category: "ventas" },
   { dbKey: "suppliers", superKey: "manage_suppliers", label: "Proveedores", category: "inventario" },
   { dbKey: "purchases", superKey: "manage_purchases", label: "Registro de Facturas", category: "inventario" },
+  { dbKey: "purchases", superKey: "manage_accounts_payable", label: "Cuentas por Pagar", category: "finanzas" },
   { dbKey: "employees", superKey: "manage_employees", label: "Empleados", category: "admin" },
   { dbKey: "reports", superKey: "view_reports", label: "Reportes", category: "reportes" },
   { dbKey: "cashClosing", superKey: "manage_cash", label: "Cierre de Caja", category: "finanzas" },
@@ -167,12 +168,18 @@ export function tenantCanAccessMenuItem(
   if (currentUser.role === "admin") {
     if (!allowedRoles.includes("admin")) return false
     if (!record) return true
-    return record.permissions[item.permissionKey] === true
+    const permissionKeys = "permissionKeys" in item ? item.permissionKeys : undefined
+    return permissionKeys
+      ? permissionKeys.some((permissionKey) => record.permissions[permissionKey] === true)
+      : record.permissions[item.permissionKey] === true
   }
 
   if (currentUser.role === "employee") {
     if (!record) return allowedRoles.includes("employee")
-    return record.permissions[item.permissionKey] === true
+    const permissionKeys = "permissionKeys" in item ? item.permissionKeys : undefined
+    return permissionKeys
+      ? permissionKeys.some((permissionKey) => record.permissions[permissionKey] === true)
+      : record.permissions[item.permissionKey] === true
   }
 
   return false

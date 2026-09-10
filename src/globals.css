@@ -2,6 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* La acción de Cuentas por Pagar vive en el header global. */
+.space-y-5.px-4.py-6.lg\:px-6 > div:first-child > button {
+  display: none !important;
+}
+
+/* Fallback para el encabezado interno de Cuentas por Pagar en navegadores con clases Tailwind dinámicas. */
+.space-y-5 > div:first-child > button {
+  display: none !important;
+}
+
+[data-slot="dialog-content"]:has(textarea[placeholder="No. de factura, detalle, quién autorizó..."]) {
+  width: 75vw !important;
+  max-width: 75vw !important;
+  height: 75vh !important;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 

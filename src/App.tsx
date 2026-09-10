@@ -13,6 +13,8 @@ const Clientes = lazy(() => import("./pages/clientes/page"));
 const ClienteAlmacen = lazy(() => import("./pages/cliente-almacen/page"));
 const Proveedores = lazy(() => import("./pages/proveedores/page"));
 const Facturas = lazy(() => import("./pages/facturas/page"));
+const CuentasPorPagar = lazy(() => import("./pages/cuentas-por-pagar/page"));
+const Finanzas = lazy(() => import("./pages/finanzas/page"));
 const Login = lazy(() => import("./pages/login/page"));
 const Bloqueo = lazy(() => import("./pages/bloqueo/page"));
 const SuscripcionVencida = lazy(() => import("./pages/suscripcion-vencida/page"));
@@ -117,6 +119,8 @@ const App = () => {
                       <Route path="/cliente-almacen" element={<ClienteAlmacen />} />
                       <Route path="/proveedores" element={<Proveedores />} />
                       <Route path="/facturas" element={<Facturas />} />
+                      <Route path="/finanzas" element={<Finanzas />} />
+                      <Route path="/cuentas-por-pagar" element={<CuentasPorPagar />} />
                       <Route path="/cierre-de-caja" element={<CierreDeCaja />} />
                       <Route path="/informe-cierre-turno" element={<InformeCierreTurno />} />
                       <Route path="/cierre-de-almacen" element={<CierreDeAlmacen />} />

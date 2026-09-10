@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { FilePlus2, HandCoins, PackagePlus, Plus, ReceiptText, Trash2 } from "lucide-react"
 import { useStore, type PurchaseItem, type Supplier } from "@/components/store-context"
 import { Badge } from "@/components/ui/badge"
@@ -16,14 +16,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { ProductSearchSelect } from "@/components/product-search-select"
 
 const money = (value: number) => `RD$ ${value.toLocaleString("es-DO", { minimumFractionDigits: 2 })}`
 
-type Destination = "products" | "armacen"
+type Destination = "none" | "products" | "armacen"
+type PurchaseKind = "productos" | "proveedores" | "otros"
 type InvoiceFilter = "all" | "credit" | "cash" | "paid"
 type Line = {
   id: string
-  mode: "existing" | "new"
+  mode: "existing" | "new" | "gasto"
   productId: string
   name: string
   sku: string
@@ -35,8 +37,8 @@ type Line = {
   sellPrice: number
 }
 
-const emptyLine = (): Line => ({
-  id: crypto.randomUUID(), mode: "existing", productId: "", name: "", sku: "", category: "General",
+const emptyLine = (kind: PurchaseKind = "proveedores"): Line => ({
+  id: crypto.randomUUID(), mode: kind === "productos" ? "existing" : "gasto", productId: "", name: "", sku: "", category: "General",
   boxNumber: "", quantity: 1, unitPrice: 0, wholesalePrice: 0, sellPrice: 0,
 })
 
@@ -48,12 +50,14 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
   const [viewedSupplierId, setViewedSupplierId] = useState(supplierId || "")
   const [invoiceFilter, setInvoiceFilter] = useState<InvoiceFilter>("all")
   const [selectedSupplierId, setSelectedSupplierId] = useState(supplierId || "")
-  const [destination, setDestination] = useState<Destination>("products")
+  const [purchaseKind, setPurchaseKind] = useState<PurchaseKind>("proveedores")
+  const [destination, setDestination] = useState<Destination>("none")
   const [paymentType, setPaymentType] = useState<"contado" | "credito">("contado")
   const [amountPaid, setAmountPaid] = useState(0)
   const [dueDate, setDueDate] = useState("")
   const [notes, setNotes] = useState("")
-  const [lines, setLines] = useState<Line[]>([emptyLine()])
+  const [lines, setLines] = useState<Line[]>([emptyLine("proveedores")])
+  const [savedProductTypes, setSavedProductTypes] = useState<string[]>([])
   const [paymentSupplierId, setPaymentSupplierId] = useState(supplierId || "")
   const [paymentPurchaseId, setPaymentPurchaseId] = useState("auto")
   const [paymentAmount, setPaymentAmount] = useState(0)
@@ -77,13 +81,33 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
   const selectedSupplier = suppliers.find((item) => item.id === selectedSupplierId)
   const paymentSupplier = suppliers.find((item) => item.id === paymentSupplierId)
-  const availableProducts = products.filter((product) => destination === "armacen" ? product.sourceTable === "armacen" : product.sourceTable !== "armacen")
+  const availableProducts = products.filter((product) => {
+    const matchesDestination = destination === "armacen" ? product.sourceTable === "armacen" : product.sourceTable !== "armacen"
+    return matchesDestination
+  })
   const pendingPurchases = purchases
     .filter((purchase) => purchase.supplierId === paymentSupplierId && purchase.total - purchase.amountPaid > 0)
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
   const subtotal = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
   const effectivePaid = paymentType === "contado" ? subtotal : Math.min(subtotal, Math.max(0, amountPaid))
   const debtCreated = Math.max(0, subtotal - effectivePaid)
+
+  useEffect(() => {
+    try {
+      const storedTypes = JSON.parse(localStorage.getItem("arkham-product-types") || "[]")
+      if (Array.isArray(storedTypes)) setSavedProductTypes(storedTypes.filter((item): item is string => typeof item === "string"))
+    } catch {
+      setSavedProductTypes([])
+    }
+  }, [])
+
+  const saveProductType = (value: string) => {
+    const productType = value.trim()
+    if (!productType || productType.toLowerCase() === "general") return
+    const nextTypes = [...savedProductTypes.filter((item) => item.toLowerCase() !== productType.toLowerCase()), productType].sort((a, b) => a.localeCompare(b, "es"))
+    setSavedProductTypes(nextTypes)
+    localStorage.setItem("arkham-product-types", JSON.stringify(nextTypes))
+  }
 
   const totals = useMemo(() => ({
     purchased: supplierPurchases.reduce((sum, item) => sum + item.total, 0),
@@ -123,16 +147,21 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
 
   const resetInvoice = () => {
     setSelectedSupplierId(supplierId || "")
-    setDestination("products")
+    setPurchaseKind("proveedores")
+    setDestination("none")
     setPaymentType("contado")
     setAmountPaid(0)
     setDueDate("")
     setNotes("")
-    setLines([emptyLine()])
+    setLines([emptyLine("proveedores")])
   }
 
   const saveInvoice = async () => {
-    if (!selectedSupplier || lines.length === 0 || lines.some((line) => !line.name.trim() || line.quantity <= 0 || line.unitPrice < 0 || (line.mode === "existing" && !line.productId))) {
+    if (purchaseKind === "productos" && destination === "none") {
+      toast({ title: "Selecciona el destino", description: "Elige Productos o Almacén, o cambia el tipo de compra a Factura de proveedor o Gasto general.", variant: "destructive" })
+      return
+    }
+    if (!selectedSupplier || lines.length === 0 || lines.some((line) => !line.name.trim() || line.quantity <= 0 || line.unitPrice < 0 || (purchaseKind === "productos" && line.mode === "existing" && !line.productId))) {
       toast({ title: "Datos incompletos", description: "Selecciona el proveedor y completa todos los productos de la factura.", variant: "destructive" })
       return
     }
@@ -141,7 +170,7 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
     try {
       const purchaseItems: PurchaseItem[] = []
       for (const line of lines) {
-        if (line.mode === "new") {
+        if (purchaseKind === "productos" && line.mode === "new") {
           const temporaryId = `new-${line.id}`
           await addProduct({
             sourceTable: destination === "armacen" ? "armacen" : "products",
@@ -153,8 +182,10 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
             supplier: selectedSupplier.id,
           })
           purchaseItems.push({ id: line.id, productId: temporaryId, productName: line.name.trim(), quantity: line.quantity, unitPrice: line.unitPrice, total: line.quantity * line.unitPrice })
-        } else {
+        } else if (purchaseKind === "productos") {
           purchaseItems.push({ id: line.id, productId: line.productId, productName: line.name, quantity: line.quantity, unitPrice: line.unitPrice, total: line.quantity * line.unitPrice })
+        } else {
+          purchaseItems.push({ id: line.id, productId: `gasto-${line.id}`, productName: line.name.trim(), quantity: line.quantity, unitPrice: line.unitPrice, total: line.quantity * line.unitPrice })
         }
       }
       const purchase = await addPurchase({
@@ -163,7 +194,8 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
         paymentMethod: "cash", amountPaid: effectivePaid,
         dueDate: paymentType === "credito" ? dueDate || undefined : undefined,
         status: debtCreated <= 0 ? "pagado" : effectivePaid > 0 ? "parcial" : "pendiente",
-        notes: `[Destino: ${destination === "armacen" ? "Almacén" : "Productos"}]${notes ? ` ${notes}` : ""}`,
+        notes: `[Tipo: ${purchaseKind === "productos" ? "Inventario" : purchaseKind === "proveedores" ? "Factura de proveedor" : "Gasto general"}; Destino: ${destination === "armacen" ? "Almacén" : destination === "products" ? "Productos" : "Ninguno"}]${notes ? ` ${notes}` : ""}`,
+        purchaseKind,
       })
       toast({ title: "Factura registrada", description: `${purchase.invoiceNumber} guardada. ${debtCreated > 0 ? `Deuda creada: ${money(debtCreated)}.` : "Pagada en efectivo."}` })
       setInvoiceOpen(false)
@@ -238,12 +270,13 @@ export function SupplierInvoices({ supplierId }: { supplierId?: string }) {
 
       <Dialog open={invoiceOpen} onOpenChange={setInvoiceOpen}><DialogContent className="max-h-[92vh] w-[95vw] max-w-[95vw] sm:w-[90vw] sm:max-w-[85vw] lg:max-w-5xl overflow-y-auto"><DialogHeader><DialogTitle>Registrar factura de compra</DialogTitle></DialogHeader>
         <FieldGroup><div className="grid gap-4 md:grid-cols-3"><Field><FieldLabel>Proveedor</FieldLabel><Select value={selectedSupplierId} onValueChange={setSelectedSupplierId} disabled={Boolean(supplierId)}><SelectTrigger><SelectValue placeholder="Seleccionar proveedor" /></SelectTrigger><SelectContent><SelectGroup>{visibleSuppliers.map((supplier) => <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>)}</SelectGroup></SelectContent></Select></Field>
-        <Field><FieldLabel>Destino del inventario</FieldLabel><Select value={destination} onValueChange={(value: Destination) => { setDestination(value); setLines([emptyLine()]) }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="products">Productos</SelectItem><SelectItem value="armacen">Almacén</SelectItem></SelectGroup></SelectContent></Select></Field>
+        <Field><FieldLabel>Tipo de compra</FieldLabel><Select value={purchaseKind} onValueChange={(value: PurchaseKind) => { setPurchaseKind(value); setDestination("none"); setLines([emptyLine(value)]) }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="productos">Compra para inventario</SelectItem><SelectItem value="proveedores">Factura de proveedor</SelectItem><SelectItem value="otros">Gasto general</SelectItem></SelectGroup></SelectContent></Select></Field>
+        {purchaseKind === "productos" && <Field><FieldLabel>Destino del inventario</FieldLabel><Select value={destination} onValueChange={(value: Destination) => { setDestination(value); setLines([emptyLine("productos")]) }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="none">Ninguno</SelectItem><SelectItem value="products">Productos</SelectItem><SelectItem value="armacen">Almacén</SelectItem></SelectGroup></SelectContent></Select></Field>}
         <Field><FieldLabel>Condición</FieldLabel><Select value={paymentType} onValueChange={(value: "contado" | "credito") => setPaymentType(value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="contado">en efectivo</SelectItem><SelectItem value="credito">Compra a crédito</SelectItem></SelectGroup></SelectContent></Select></Field></div></FieldGroup>
-        <div className="flex flex-col gap-3"><div className="flex items-center justify-between"><div><h3 className="font-semibold">Productos comprados</h3><p className="text-sm text-muted-foreground">Selecciona uno existente o crea uno nuevo.</p></div><Button variant="outline" size="sm" onClick={() => setLines((current) => [...current, emptyLine()])}><Plus data-icon="inline-start" /> Agregar línea</Button></div>
-          {lines.map((line, index) => <Card key={line.id}><CardHeader className="pb-3"><div className="flex items-center justify-between"><CardTitle className="text-base">Producto {index + 1}</CardTitle><Button variant="ghost" size="icon" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}><Trash2 /><span className="sr-only">Eliminar producto</span></Button></div></CardHeader><CardContent className="flex flex-col gap-4">
-            <div className="grid gap-4 md:grid-cols-4"><div><Label>Tipo</Label><Select value={line.mode} onValueChange={(value: "existing" | "new") => updateLine(line.id, { mode: value, productId: "", name: "" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="existing">Producto existente</SelectItem><SelectItem value="new">Producto nuevo</SelectItem></SelectGroup></SelectContent></Select></div>
-            {line.mode === "existing" ? <div className="md:col-span-2"><Label>Producto</Label><Select value={line.productId} onValueChange={(value) => chooseExistingProduct(line.id, value)}><SelectTrigger><SelectValue placeholder="Seleccionar producto" /></SelectTrigger><SelectContent><SelectGroup>{availableProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · stock {product.stock}</SelectItem>)}</SelectGroup></SelectContent></Select></div> : <><div><Label>Nombre</Label><Input value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div><div><Label>SKU</Label><Input value={line.sku} onChange={(event) => updateLine(line.id, { sku: event.target.value })} /></div></>}
+        <div className="flex flex-col gap-3"><div className="flex items-center justify-between"><div><h3 className="font-semibold">{purchaseKind === "productos" ? "Productos comprados" : "Conceptos de la factura"}</h3><p className="text-sm text-muted-foreground">{purchaseKind === "productos" ? "Selecciona uno existente o crea uno nuevo." : "Registra los conceptos sin agregarlos al inventario."}</p></div><Button variant="outline" size="sm" onClick={() => setLines((current) => [...current, emptyLine(purchaseKind)])}><Plus data-icon="inline-start" /> Agregar línea</Button></div>
+          {lines.map((line, index) => <Card key={line.id}><CardHeader className="pb-3"><div className="flex items-center justify-between"><CardTitle className="text-base">Producto {index + 1}</CardTitle><Button variant="ghost" size="icon" disabled={lines.length === 1} onClick={() => setLines((current) => current.filter((item) => item.id !== line.id))}><Trash2 /><span className="sr-only">Eliminar producto</span></Button></div></CardHeader><CardContent className="flex flex-col gap-4">{purchaseKind === "productos" && <Input placeholder="Buscar producto por nombre o SKU" value={productSearch} onChange={(event) => setProductSearch(event.target.value)} />}
+            <div className="grid gap-4 md:grid-cols-4"><div><Label>Tipo</Label><Select value={line.mode} onValueChange={(value: "existing" | "new" | "gasto") => updateLine(line.id, { mode: value, productId: "", name: "" })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="existing">Producto existente</SelectItem><SelectItem value="new">Producto nuevo</SelectItem><SelectItem value="gasto">Concepto</SelectItem></SelectGroup></SelectContent></Select></div>
+            {line.mode === "existing" ? <div className="md:col-span-2"><Label>Producto</Label><ProductSearchSelect products={availableProducts} value={line.productId} onChange={(productId) => chooseExistingProduct(line.id, productId)} /></div> : <><div><Label>Nombre</Label><Input value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div><div><Label>SKU</Label><Input value={line.sku} onChange={(event) => updateLine(line.id, { sku: event.target.value })} /></div><div><Label>Tipo de producto</Label><div className="flex gap-2"><Input list="supplier-saved-product-types" value={line.category} onChange={(event) => updateLine(line.id, { category: event.target.value })} placeholder="Ej: Oficina, Limpieza, Repuestos" /><Button type="button" variant="outline" size="icon" title="Guardar tipo para reutilizar" onClick={() => saveProductType(line.category)}><Plus className="h-4 w-4" /><span className="sr-only">Guardar tipo</span></Button></div></div><datalist id="supplier-saved-product-types">{savedProductTypes.map((productType) => <option key={productType} value={productType} />)}</datalist></>}
             <div><Label>Cantidad</Label><Input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })} /></div></div>
             <div className="grid gap-4 sm:grid-cols-3"><div><Label>Costo unitario</Label><Input type="number" min="0" value={line.unitPrice} onChange={(event) => updateLine(line.id, { unitPrice: Number(event.target.value) })} /></div>{line.mode === "new" && <><div><Label>Precio venta</Label><Input type="number" min="0" value={line.sellPrice} onChange={(event) => updateLine(line.id, { sellPrice: Number(event.target.value) })} /></div>{destination === "armacen" && <div><Label>Número de caja</Label><Input value={line.boxNumber} onChange={(event) => updateLine(line.id, { boxNumber: event.target.value })} /></div>}</>}</div>
           </CardContent></Card>)}

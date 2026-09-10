@@ -114,6 +114,8 @@ export interface Supplier {
   address: string
   debt: number
   totalPurchases: number
+  defaultCreditDays?: number
+  defaultLatePenaltyPercent?: number
 }
 
 export interface Customer {
@@ -189,15 +191,20 @@ export interface Purchase {
   items: PurchaseItem[]
   subtotal: number
   tax: number
+  supplierInvoiceNumber?: string
+  ncf?: string
+  itbis?: number
   total: number
   paymentType: "contado" | "credito"
   paymentMethod?: "cash" | "card" | "transfer"
   amountPaid: number
   dueDate?: string
+  creditDays?: number
+  latePenaltyPercent?: number
   status: "pendiente" | "parcial" | "pagado"
   notes?: string
-  /** Clasifica la compra: repuestos/piezas, productos de inventario u otros gastos sin inventario. */
-  purchaseKind?: "piezas" | "productos" | "otros"
+  /** Clasifica la compra: inventario, factura de proveedor o gasto general. */
+  purchaseKind?: "productos" | "proveedores" | "otros" | "piezas"
   /** URL pública del documento original de la factura (PDF o foto) en Supabase Storage. */
   attachmentUrl?: string
   /** MIME type del adjunto, ej. "application/pdf" o "image/jpeg". */
@@ -216,6 +223,29 @@ export interface SupplierPayment {
   note?: string
   /** URL pública del comprobante de pago (foto/PDF) adjunto al abono. */
   attachmentUrl?: string
+}
+
+export interface AccountPayable {
+  id: string
+  expenseDate: string
+  category: "mercancia" | "nomina" | "servicios" | "alquiler" | "mantenimiento" | "activos" | "transporte" | "publicidad" | "seguros" | "financieros" | "impuestos" | "otros"
+  concept: string
+  supplierId?: string
+  supplierName?: string
+  supplierRnc?: string
+  hasNcf: boolean
+  ncf?: string
+  amount: number
+  amountIncludesItbis: boolean
+  itbisRate: number
+  itbisAmount: number
+  baseAmount: number
+  totalAmount: number
+  paymentType: "credito" | "contado"
+  dueDate?: string
+  amountPaid: number
+  status: "pendiente" | "parcial" | "pagado"
+  note?: string
 }
 
 export interface RepairStatusHistoryEntry {
@@ -599,6 +629,8 @@ const mapSupplierFromDB = (rec: any): Supplier => ({
   address: rec.address || "",
   debt: Number(rec.debt) || 0,
   totalPurchases: Number(rec.total_purchases) || 0,
+  defaultCreditDays: rec.default_credit_days == null ? undefined : Number(rec.default_credit_days),
+  defaultLatePenaltyPercent: Number(rec.default_late_penalty_percent) || 0,
 })
 
 const coercePermissionFlag = (value: unknown, fallback: boolean): boolean => {
@@ -698,17 +730,30 @@ const mapPurchaseFromDB = (rec: any): Purchase => ({
   items: rec.items || [],
   subtotal: Number(rec.subtotal) || 0,
   tax: Number(rec.tax) || 0,
+  supplierInvoiceNumber: rec.supplier_invoice_number || undefined,
+  ncf: rec.ncf || undefined,
+  itbis: Number(rec.itbis) || 0,
   total: Number(rec.total) || 0,
   paymentType: rec.payment_type || "contado",
   paymentMethod: rec.payment_method,
   amountPaid: Number(rec.amount_paid) || 0,
   dueDate: rec.due_date,
+  creditDays: rec.credit_days == null ? undefined : Number(rec.credit_days),
+  latePenaltyPercent: Number(rec.late_penalty_percent) || 0,
   status: rec.status || "pendiente",
   notes: rec.notes || undefined,
   purchaseKind: rec.purchase_kind || "productos",
   attachmentUrl: rec.attachment_url || undefined,
   attachmentType: rec.attachment_type || undefined,
 })
+
+export const isPurchaseOverdue = (purchase: Purchase) =>
+  purchase.status !== "pagado" && Boolean(purchase.dueDate) && new Date(purchase.dueDate as string) < new Date()
+
+export const calculatePurchaseLateFee = (purchase: Purchase) =>
+  isPurchaseOverdue(purchase)
+    ? Math.max(0, purchase.total - purchase.amountPaid) * (Number(purchase.latePenaltyPercent) || 0) / 100
+    : 0
 
 const mapSupplierPaymentFromDB = (rec: any): SupplierPayment => ({
   id: rec.id,
@@ -721,6 +766,29 @@ const mapSupplierPaymentFromDB = (rec: any): SupplierPayment => ({
   remainingDebt: Number(rec.remaining_debt) || 0,
   note: rec.note || undefined,
   attachmentUrl: rec.attachment_url || undefined,
+})
+
+const mapAccountPayableFromDB = (rec: any): AccountPayable => ({
+  id: rec.id,
+  expenseDate: rec.expense_date,
+  category: rec.category || "otros",
+  concept: rec.concept || "",
+  supplierId: rec.supplier_id || undefined,
+  supplierName: rec.supplier_name_freetext || undefined,
+  supplierRnc: rec.supplier_rnc_freetext || undefined,
+  hasNcf: Boolean(rec.has_ncf),
+  ncf: rec.ncf || undefined,
+  amount: Number(rec.amount) || 0,
+  amountIncludesItbis: rec.amount_includes_itbis !== false,
+  itbisRate: Number(rec.itbis_rate) || 18,
+  itbisAmount: Number(rec.itbis_amount) || 0,
+  baseAmount: Number(rec.base_amount) || 0,
+  totalAmount: Number(rec.total_amount) || 0,
+  paymentType: rec.payment_type === "contado" ? "contado" : "credito",
+  dueDate: rec.due_date || undefined,
+  amountPaid: Number(rec.amount_paid) || 0,
+  status: rec.status || "pendiente",
+  note: rec.note || undefined,
 })
 
 const mapReturnFromDB = (rec: any): Return => ({
@@ -845,8 +913,6 @@ const isMissingTableError = (error: any) => {
     message.includes("does not exist") ||
     message.includes("relation") ||
     message.includes("schema cache") ||
-    message.includes("permission denied") ||
-    message.includes("failed to fetch") ||
     details.includes("does not exist") ||
     details.includes("could not find") ||
     hint.includes("does not exist")
@@ -891,6 +957,7 @@ interface StoreContextType {
   repairs: Repair[]
   repairHistory: RepairHistory[]
   purchases: Purchase[]
+  accountsPayable: AccountPayable[]
   supplierPayments: SupplierPayment[]
   returns: Return[]
   employees: Employee[]
@@ -919,6 +986,11 @@ interface StoreContextType {
   deletePayment: (id: string) => Promise<void>
   addPurchase: (purchase: Omit<Purchase, "id" | "invoiceNumber" | "date">) => Promise<Purchase>
   updatePurchase: (id: string, purchase: Partial<Purchase>) => Promise<void>
+  calculateLateFee: (purchase: Purchase) => number
+  addAccountPayable: (account: Omit<AccountPayable, "id" | "amountPaid" | "status">) => Promise<AccountPayable>
+  addAccountPayablePayment: (accountPayableId: string, amount: number, paymentMethod: "cash" | "card" | "transfer", note?: string) => Promise<void>
+  updateAccountPayablePayment: (paymentId: string, accountPayableId: string, amount: number, paymentMethod: "cash" | "card" | "transfer", note?: string) => Promise<void>
+  deleteAccountPayablePayment: (paymentId: string, accountPayableId: string, amount: number) => Promise<void>
   addSupplierPayment: (payment: Omit<SupplierPayment, "id" | "date" | "previousDebt" | "remainingDebt">) => Promise<SupplierPayment[]>
   addReturn: (returnData: Omit<Return, "id" | "returnNumber" | "date">) => Promise<Return>
   cancelReturn: (returnId: string) => Promise<void>
@@ -973,6 +1045,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [repairs, setRepairs] = useState<Repair[]>(INITIAL_REPAIRS)
   const [repairHistory, setRepairHistory] = useState<RepairHistory[]>([])
   const [purchases, setPurchases] = useState<Purchase[]>([])
+  const [accountsPayable, setAccountsPayable] = useState<AccountPayable[]>([])
   const [supplierPayments, setSupplierPayments] = useState<SupplierPayment[]>([])
   const [returns, setReturns] = useState<Return[]>([])
   const [employees, setEmployees] = useState<Employee[]>(INITIAL_EMPLOYEES)
@@ -1468,10 +1541,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
       const supabase = createClient()
       console.log("[v0] Fetching repairs...")
-      // Fallback para proyectos donde pg_cron todavía no esté habilitado.
-      void supabase.rpc("cleanup_expired_repair_photos").then(({ error }) => {
-        if (error) console.warn("[v0] Repair photo cleanup was not executed:", error.message)
-      })
       const { data, error } = await withTenantFilter(
         supabase.from("repairs").select("*"),
       ).order("created_at", { ascending: false })
@@ -1626,6 +1695,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
 
+  const fetchAccountsPayable = useCallback(async () => {
+    if (!currentUser) {
+      setAccountsPayable([])
+      return
+    }
+    if (isTableMissing("accounts_payable")) return
+    const supabase = createClient()
+    const { data, error } = await withTenantFilter(supabase.from("accounts_payable").select("*"))
+      .order("expense_date", { ascending: false })
+    if (error) {
+      markMissingTable("accounts_payable")
+      setAccountsPayable([])
+      console.warn("[v0] Could not fetch accounts payable:", error)
+      return
+    }
+    if (data) setAccountsPayable(data.map(mapAccountPayableFromDB))
+  }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
+
   const fetchSupplierPayments = useCallback(async () => {
     if (!currentUser) {
       setSupplierPayments([])
@@ -1665,7 +1752,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setSuppliers([])
       setExpenses([])
       setPurchases([])
+      setAccountsPayable([])
       setSupplierPayments([])
+      return
+    }
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      console.warn("[v0] Skipping Supabase refresh while offline.")
       return
     }
     console.log("Refreshing all data...")
@@ -1685,6 +1777,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       fetchSuppliers,
       fetchExpenses,
       fetchPurchases,
+      fetchAccountsPayable,
       fetchSupplierPayments,
     ]
 
@@ -1707,6 +1800,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     fetchSuppliers,
     fetchExpenses,
     fetchPurchases,
+    fetchAccountsPayable,
     fetchSupplierPayments,
   ])
 
@@ -1714,10 +1808,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   // Load data whenever the authenticated user/tenant changes
   useEffect(() => {
-    if (currentUserId) {
+    if (currentUserId && (typeof navigator === "undefined" || navigator.onLine)) {
       void refreshData()
     }
   }, [refreshData, currentUserId])
+
+  useEffect(() => {
+    if (!currentUserId || typeof window === "undefined") return
+    const handleOnline = () => { void refreshData() }
+    window.addEventListener("online", handleOnline)
+    return () => window.removeEventListener("online", handleOnline)
+  }, [currentUserId, refreshData])
 
   // Realtime subscriptions
   useEffect(() => {
@@ -3787,6 +3888,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           address: supplier.address,
           debt: supplier.debt || 0,
           total_purchases: supplier.totalPurchases || 0,
+          default_credit_days: supplier.defaultCreditDays,
+          default_late_penalty_percent: supplier.defaultLatePenaltyPercent || 0,
         }),
       )
       .select()
@@ -3832,6 +3935,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (updatedSupplier.address !== undefined) updateData.address = updatedSupplier.address
       if (updatedSupplier.debt !== undefined) updateData.debt = updatedSupplier.debt
       if (updatedSupplier.totalPurchases !== undefined) updateData.total_purchases = updatedSupplier.totalPurchases
+      if (updatedSupplier.defaultCreditDays !== undefined) updateData.default_credit_days = updatedSupplier.defaultCreditDays
+      if (updatedSupplier.defaultLatePenaltyPercent !== undefined) updateData.default_late_penalty_percent = updatedSupplier.defaultLatePenaltyPercent
 
       const { error } = await withTenantFilter(supabase.from("suppliers").update(updateData)).eq("id", id)
 
@@ -4202,6 +4307,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const tempId = generatePurchaseNumber()
     const newPurchase: Purchase = {
       ...purchaseData,
+      itbis: Number(purchaseData.itbis) || 0,
+      latePenaltyPercent: Number(purchaseData.latePenaltyPercent) || 0,
       id: tempId,
       invoiceNumber: tempId,
       date: new Date().toISOString(),
@@ -4243,11 +4350,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         items: newPurchase.items,
         subtotal: newPurchase.subtotal,
         tax: newPurchase.tax,
+        supplier_invoice_number: newPurchase.supplierInvoiceNumber,
+        ncf: newPurchase.ncf,
+        itbis: newPurchase.itbis,
         total: newPurchase.total,
         payment_type: newPurchase.paymentType,
         payment_method: newPurchase.paymentMethod,
         amount_paid: newPurchase.amountPaid,
         due_date: newPurchase.dueDate,
+        credit_days: newPurchase.creditDays,
+        late_penalty_percent: newPurchase.latePenaltyPercent,
         status: newPurchase.status,
         notes: newPurchase.notes,
         purchase_kind: newPurchase.purchaseKind || "productos",
@@ -4296,6 +4408,114 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     return newPurchase
   }
 
+  const addAccountPayable = async (accountData: Omit<AccountPayable, "id" | "amountPaid" | "status">) => {
+    if (!canCurrentUserPerform("canAdd")) {
+      notifyAddPermissionDenied("cuentas por pagar")
+      throw new Error("Sin permiso para agregar cuentas por pagar.")
+    }
+    if (!accountData.concept.trim() || accountData.totalAmount <= 0) throw new Error("Concepto y monto son obligatorios")
+    if (!accountData.supplierId && !accountData.supplierName?.trim()) throw new Error("Indica un proveedor")
+    if (accountData.hasNcf && !accountData.ncf?.trim()) throw new Error("El NCF es obligatorio")
+    if (accountData.paymentType === "credito" && !accountData.dueDate) throw new Error("La fecha de vencimiento es obligatoria")
+
+    const id = generateUUID()
+    const newAccount: AccountPayable = { ...accountData, id, amountPaid: 0, status: "pendiente" }
+    const previousAccounts = accountsPayable
+    setAccountsPayable((current) => [newAccount, ...current])
+    try {
+      const { error } = await createClient().from("accounts_payable").insert(withTenantPayload({
+        id,
+        expense_date: newAccount.expenseDate,
+        category: newAccount.category,
+        concept: newAccount.concept,
+        supplier_id: newAccount.supplierId || null,
+        supplier_name_freetext: newAccount.supplierName || null,
+        supplier_rnc_freetext: newAccount.supplierRnc || null,
+        has_ncf: newAccount.hasNcf,
+        ncf: newAccount.ncf || null,
+        amount: newAccount.amount,
+        amount_includes_itbis: newAccount.amountIncludesItbis,
+        itbis_rate: newAccount.itbisRate,
+        itbis_amount: newAccount.itbisAmount,
+        base_amount: newAccount.baseAmount,
+        total_amount: newAccount.totalAmount,
+        payment_type: newAccount.paymentType,
+        due_date: newAccount.dueDate || null,
+        amount_paid: 0,
+        status: "pendiente",
+        note: newAccount.note || null,
+      }))
+      if (error) throw error
+      return newAccount
+    } catch (error) {
+      setAccountsPayable(previousAccounts)
+      throw error
+    }
+  }
+
+  const addAccountPayablePayment = async (accountPayableId: string, amount: number, paymentMethod: "cash" | "card" | "transfer", note?: string) => {
+    if (!canCurrentUserPerform("canAdd")) throw new Error("Sin permiso para agregar abonos.")
+    const account = accountsPayable.find((item) => item.id === accountPayableId)
+    if (!account || amount <= 0 || amount > account.totalAmount - account.amountPaid) throw new Error("Monto de abono inválido")
+    const nextAmountPaid = Math.min(account.totalAmount, account.amountPaid + amount)
+    const nextStatus: AccountPayable["status"] = nextAmountPaid >= account.totalAmount ? "pagado" : "parcial"
+    const previousAccounts = accountsPayable
+    setAccountsPayable((current) => current.map((item) => item.id === accountPayableId ? { ...item, amountPaid: nextAmountPaid, status: nextStatus } : item))
+    try {
+      const supabase = createClient()
+      const { error: paymentError } = await supabase.from("accounts_payable_payments").insert(withTenantPayload({ account_payable_id: accountPayableId, amount, payment_method: paymentMethod, note: note || null }))
+      if (paymentError) throw paymentError
+      const { error } = await withTenantFilter(supabase.from("accounts_payable").update({ amount_paid: nextAmountPaid, status: nextStatus })).eq("id", accountPayableId)
+      if (error) throw error
+    } catch (error) {
+      setAccountsPayable(previousAccounts)
+      throw error
+    }
+  }
+
+  const updateAccountPayablePayment = async (paymentId: string, accountPayableId: string, amount: number, paymentMethod: "cash" | "card" | "transfer", note?: string) => {
+    if (!canCurrentUserPerform("canAdd")) throw new Error("Sin permiso para corregir abonos.")
+    const account = accountsPayable.find((item) => item.id === accountPayableId)
+    if (!account || amount <= 0) throw new Error("Monto de abono inválido")
+    const { data: previousPayment, error: readError } = await createClient().from("accounts_payable_payments").select("amount").eq("id", paymentId).single()
+    if (readError || !previousPayment) throw readError || new Error("No se encontró el abono")
+    const nextAmountPaid = account.amountPaid - Number(previousPayment.amount || 0) + amount
+    if (nextAmountPaid < 0 || nextAmountPaid > account.totalAmount) throw new Error("El abono supera el balance permitido")
+    const nextStatus: AccountPayable["status"] = nextAmountPaid >= account.totalAmount ? "pagado" : nextAmountPaid > 0 ? "parcial" : "pendiente"
+    const previousAccounts = accountsPayable
+    setAccountsPayable((current) => current.map((item) => item.id === accountPayableId ? { ...item, amountPaid: nextAmountPaid, status: nextStatus } : item))
+    try {
+      const supabase = createClient()
+      const { error: paymentError } = await supabase.from("accounts_payable_payments").update({ amount, payment_method: paymentMethod, note: note || null }).eq("id", paymentId)
+      if (paymentError) throw paymentError
+      const { error } = await withTenantFilter(supabase.from("accounts_payable").update({ amount_paid: nextAmountPaid, status: nextStatus })).eq("id", accountPayableId)
+      if (error) throw error
+    } catch (error) {
+      setAccountsPayable(previousAccounts)
+      throw error
+    }
+  }
+
+  const deleteAccountPayablePayment = async (paymentId: string, accountPayableId: string, amount: number) => {
+    if (!canCurrentUserPerform("canAdd")) throw new Error("Sin permiso para eliminar abonos.")
+    const account = accountsPayable.find((item) => item.id === accountPayableId)
+    if (!account || amount <= 0 || amount > account.amountPaid) throw new Error("Abono inválido")
+    const nextAmountPaid = account.amountPaid - amount
+    const nextStatus: AccountPayable["status"] = nextAmountPaid >= account.totalAmount ? "pagado" : nextAmountPaid > 0 ? "parcial" : "pendiente"
+    const previousAccounts = accountsPayable
+    setAccountsPayable((current) => current.map((item) => item.id === accountPayableId ? { ...item, amountPaid: nextAmountPaid, status: nextStatus } : item))
+    try {
+      const supabase = createClient()
+      const { error: paymentError } = await supabase.from("accounts_payable_payments").delete().eq("id", paymentId)
+      if (paymentError) throw paymentError
+      const { error } = await withTenantFilter(supabase.from("accounts_payable").update({ amount_paid: nextAmountPaid, status: nextStatus })).eq("id", accountPayableId)
+      if (error) throw error
+    } catch (error) {
+      setAccountsPayable(previousAccounts)
+      throw error
+    }
+  }
+
   const updatePurchase = async (id: string, updatedPurchase: Partial<Purchase>) => {
     if (!canCurrentUserPerform("canEdit")) {
       notifyCrudPermissionDenied("editar", "compras")
@@ -4320,11 +4540,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (updatedPurchase.items !== undefined) updateData.items = updatedPurchase.items
       if (updatedPurchase.subtotal !== undefined) updateData.subtotal = updatedPurchase.subtotal
       if (updatedPurchase.tax !== undefined) updateData.tax = updatedPurchase.tax
+      if (updatedPurchase.supplierInvoiceNumber !== undefined) updateData.supplier_invoice_number = updatedPurchase.supplierInvoiceNumber
+      if (updatedPurchase.ncf !== undefined) updateData.ncf = updatedPurchase.ncf
+      if (updatedPurchase.itbis !== undefined) updateData.itbis = updatedPurchase.itbis
       if (updatedPurchase.total !== undefined) updateData.total = updatedPurchase.total
       if (updatedPurchase.paymentType !== undefined) updateData.payment_type = updatedPurchase.paymentType
       if (updatedPurchase.paymentMethod !== undefined) updateData.payment_method = updatedPurchase.paymentMethod
       if (updatedPurchase.amountPaid !== undefined) updateData.amount_paid = updatedPurchase.amountPaid
       if (updatedPurchase.dueDate !== undefined) updateData.due_date = updatedPurchase.dueDate
+      if (updatedPurchase.creditDays !== undefined) updateData.credit_days = updatedPurchase.creditDays
+      if (updatedPurchase.latePenaltyPercent !== undefined) updateData.late_penalty_percent = updatedPurchase.latePenaltyPercent
       if (updatedPurchase.status !== undefined) updateData.status = updatedPurchase.status
       if (updatedPurchase.notes !== undefined) updateData.notes = updatedPurchase.notes
       if (updatedPurchase.purchaseKind !== undefined) updateData.purchase_kind = updatedPurchase.purchaseKind
@@ -5751,6 +5976,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         repairs,
         repairHistory,
         purchases,
+        accountsPayable,
         supplierPayments,
         returns,
         employees,
@@ -5770,7 +5996,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         addPayment,
         deletePayment,
         addPurchase,
+        addAccountPayable,
+        addAccountPayablePayment,
+        updateAccountPayablePayment,
+        deleteAccountPayablePayment,
         updatePurchase,
+        calculateLateFee: calculatePurchaseLateFee,
         addSupplierPayment,
         addReturn,
         cancelReturn,

@@ -17,6 +17,7 @@ import { useStore, type Purchase, type PurchaseItem } from "@/components/store-c
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -27,13 +28,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { isValidPurchaseAttachment, uploadPurchaseAttachment } from "@/lib/purchase-attachments-storage"
+import { ProductSearchSelect } from "@/components/product-search-select"
 
 const money = (value: number) => `RD$ ${value.toLocaleString("es-DO", { minimumFractionDigits: 2 })}`
 const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateString("es-DO") : "—")
 
-type PurchaseKind = "piezas" | "productos" | "otros"
-type Destination = "products" | "armacen"
-type StatusFilter = "all" | "pendiente" | "parcial" | "pagado"
+type PurchaseKind = "productos" | "proveedores" | "otros"
+type StoredPurchaseKind = PurchaseKind | "piezas"
+type Destination = "none" | "products" | "armacen"
+type StatusFilter = "all" | "pendiente" | "parcial" | "pagado" | "vencida"
 
 type Line = {
   id: string
@@ -63,8 +66,8 @@ const emptyLine = (kind: PurchaseKind): Line => ({
   sellPrice: 0,
 })
 
-const kindLabel = (kind?: PurchaseKind) =>
-  kind === "piezas" ? "Piezas" : kind === "otros" ? "Otros / Gastos" : "Productos"
+const kindLabel = (kind?: StoredPurchaseKind) =>
+  kind === "otros" ? "Gasto general" : kind === "proveedores" || kind === "piezas" ? "Factura de proveedor" : "Compra para inventario"
 
 const isOverdue = (purchase: Purchase) =>
   purchase.status !== "pagado" && Boolean(purchase.dueDate) && new Date(purchase.dueDate as string) < new Date()
@@ -78,6 +81,7 @@ export default function FacturasPage() {
     addPurchase,
     addSupplierPayment,
     addProduct,
+    calculateLateFee,
     employees,
     currentUser,
     setOnDialogOpen,
@@ -98,12 +102,19 @@ export default function FacturasPage() {
   const [saving, setSaving] = useState(false)
   const [selectedSupplierId, setSelectedSupplierId] = useState("")
   const [purchaseKind, setPurchaseKind] = useState<PurchaseKind>("productos")
-  const [destination, setDestination] = useState<Destination>("products")
+  const [destination, setDestination] = useState<Destination>("none")
   const [paymentType, setPaymentType] = useState<"contado" | "credito">("contado")
   const [amountPaid, setAmountPaid] = useState(0)
   const [dueDate, setDueDate] = useState("")
+  const [creditDays, setCreditDays] = useState<number | "">("")
+  const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState("")
+  const [ncf, setNcf] = useState("")
+  const [includesItbis, setIncludesItbis] = useState(true)
+  const [itbis, setItbis] = useState(0)
+  const [latePenaltyPercent, setLatePenaltyPercent] = useState(0)
   const [notes, setNotes] = useState("")
   const [lines, setLines] = useState<Line[]>([emptyLine("productos")])
+  const [savedProductTypes, setSavedProductTypes] = useState<string[]>([])
 
   // ---------- Diálogo: registrar abono ----------
   const [paymentOpen, setPaymentOpen] = useState(false)
@@ -127,8 +138,26 @@ export default function FacturasPage() {
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
 
   const subtotal = lines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unitPrice || 0), 0)
-  const effectivePaid = paymentType === "contado" ? subtotal : Math.min(subtotal, Math.max(0, amountPaid))
-  const debtCreated = Math.max(0, subtotal - effectivePaid)
+  const total = subtotal + (includesItbis ? Math.max(0, Number(itbis) || 0) : 0)
+  const effectivePaid = paymentType === "contado" ? total : Math.min(total, Math.max(0, amountPaid))
+  const debtCreated = Math.max(0, total - effectivePaid)
+
+  useEffect(() => {
+    try {
+      const storedTypes = JSON.parse(localStorage.getItem("arkham-product-types") || "[]")
+      if (Array.isArray(storedTypes)) setSavedProductTypes(storedTypes.filter((item): item is string => typeof item === "string"))
+    } catch {
+      setSavedProductTypes([])
+    }
+  }, [])
+
+  const saveProductType = (value: string) => {
+    const productType = value.trim()
+    if (!productType || productType.toLowerCase() === "general") return
+    const nextTypes = [...savedProductTypes.filter((item) => item.toLowerCase() !== productType.toLowerCase()), productType].sort((a, b) => a.localeCompare(b, "es"))
+    setSavedProductTypes(nextTypes)
+    localStorage.setItem("arkham-product-types", JSON.stringify(nextTypes))
+  }
 
   const paymentPreview = useMemo(() => {
     const preferredId = paymentPurchaseId === "auto" ? undefined : paymentPurchaseId
@@ -152,8 +181,9 @@ export default function FacturasPage() {
   )
   const filteredPurchases = allPurchases.filter((purchase) => {
     if (filterSupplierId !== "all" && purchase.supplierId !== filterSupplierId) return false
-    if (filterStatus !== "all" && purchase.status !== filterStatus) return false
-    if (filterKind !== "all" && (purchase.purchaseKind || "productos") !== filterKind) return false
+    if (filterStatus === "vencida" && !isOverdue(purchase)) return false
+    if (filterStatus !== "all" && filterStatus !== "vencida" && purchase.status !== filterStatus) return false
+    if (filterKind !== "all" && (purchase.purchaseKind === "piezas" ? "proveedores" : purchase.purchaseKind || "productos") !== filterKind) return false
     if (search.trim()) {
       const term = search.trim().toLowerCase()
       const haystack = `${purchase.invoiceNumber} ${purchase.supplierName} ${purchase.notes || ""}`.toLowerCase()
@@ -199,7 +229,7 @@ export default function FacturasPage() {
 
   const changeKind = (kind: PurchaseKind) => {
     setPurchaseKind(kind)
-    setDestination("products")
+    setDestination("none")
     setLines([emptyLine(kind)])
   }
 
@@ -210,14 +240,33 @@ export default function FacturasPage() {
     }
     setSelectedSupplierId("")
     setPurchaseKind("productos")
-    setDestination("products")
+    setDestination("none")
     setPaymentType("contado")
     setAmountPaid(0)
     setDueDate("")
+    setCreditDays("")
+    setSupplierInvoiceNumber("")
+    setNcf("")
+    setIncludesItbis(true)
+    setItbis(0)
+    setLatePenaltyPercent(0)
     setNotes("")
     setLines([emptyLine("productos")])
     setInvoiceOpen(true)
   }, [canAdd, toast])
+
+  useEffect(() => {
+    if (!selectedSupplier) return
+    setCreditDays(selectedSupplier.defaultCreditDays ?? "")
+    setLatePenaltyPercent(selectedSupplier.defaultLatePenaltyPercent ?? 0)
+  }, [selectedSupplier, selectedSupplierId])
+
+  useEffect(() => {
+    if (paymentType !== "credito" || creditDays === "") return
+    const date = new Date()
+    date.setDate(date.getDate() + Number(creditDays))
+    setDueDate(date.toISOString().slice(0, 10))
+  }, [creditDays, paymentType])
 
   useEffect(() => {
     setOnDialogOpen?.(openInvoiceDialog)
@@ -253,7 +302,7 @@ export default function FacturasPage() {
       })
       return
     }
-    if (paymentType === "credito" && effectivePaid > subtotal) return
+    if (paymentType === "credito" && effectivePaid > total) return
 
     setSaving(true)
     try {
@@ -309,12 +358,17 @@ export default function FacturasPage() {
         supplierName: selectedSupplier.name,
         items: purchaseItems,
         subtotal,
-        tax: 0,
-        total: subtotal,
+        tax: itbis,
+        supplierInvoiceNumber: supplierInvoiceNumber.trim() || undefined,
+        ncf: ncf.trim() || undefined,
+        itbis,
+        total,
         paymentType,
         paymentMethod: "cash",
         amountPaid: effectivePaid,
         dueDate: paymentType === "credito" ? dueDate || undefined : undefined,
+        creditDays: paymentType === "credito" && creditDays !== "" ? Number(creditDays) : undefined,
+        latePenaltyPercent,
         status: debtCreated <= 0 ? "pagado" : effectivePaid > 0 ? "parcial" : "pendiente",
         notes: notes || undefined,
         purchaseKind,
@@ -425,15 +479,16 @@ export default function FacturasPage() {
               <SelectItem value="pendiente">Pendiente</SelectItem>
               <SelectItem value="parcial">Abonada</SelectItem>
               <SelectItem value="pagado">Pagada</SelectItem>
+              <SelectItem value="vencida">Vencida</SelectItem>
             </SelectGroup></SelectContent>
           </Select>
           <Select value={filterKind} onValueChange={(value: "all" | PurchaseKind) => setFilterKind(value)}>
             <SelectTrigger className="sm:w-44"><SelectValue placeholder="Tipo" /></SelectTrigger>
             <SelectContent><SelectGroup>
               <SelectItem value="all">Todos los tipos</SelectItem>
-              <SelectItem value="piezas">Piezas</SelectItem>
-              <SelectItem value="productos">Productos</SelectItem>
-              <SelectItem value="otros">Otros / Gastos</SelectItem>
+              <SelectItem value="productos">Compra para inventario</SelectItem>
+              <SelectItem value="proveedores">Factura de proveedor</SelectItem>
+              <SelectItem value="otros">Gasto general</SelectItem>
             </SelectGroup></SelectContent>
           </Select>
         </CardContent>
@@ -469,7 +524,7 @@ export default function FacturasPage() {
                 <TableBody>
                   {filteredPurchases.map((purchase) => (
                     <TableRow key={purchase.id}>
-                      <TableCell className="font-medium">{purchase.invoiceNumber}</TableCell>
+                      <TableCell className="font-medium"><div>{purchase.invoiceNumber}</div><div className="text-xs text-muted-foreground">{purchase.supplierInvoiceNumber || "Sin número proveedor"}</div></TableCell>
                       <TableCell>{purchase.supplierName}</TableCell>
                       <TableCell>{formatDate(purchase.date)}</TableCell>
                       <TableCell><Badge variant="outline">{kindLabel(purchase.purchaseKind)}</Badge></TableCell>
@@ -478,7 +533,7 @@ export default function FacturasPage() {
                           {statusBadge(purchase)}
                           {isOverdue(purchase) && (
                             <span className="flex items-center gap-1 text-xs text-red-500">
-                              <AlertTriangle className="h-3 w-3" /> Vencida ({formatDate(purchase.dueDate)})
+                              <AlertTriangle className="h-3 w-3" /> Vencida ({formatDate(purchase.dueDate)}) · mora {money(calculateLateFee(purchase))}
                             </span>
                           )}
                         </div>
@@ -579,9 +634,9 @@ export default function FacturasPage() {
                 <Select value={purchaseKind} onValueChange={(value: PurchaseKind) => changeKind(value)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent><SelectGroup>
-                    <SelectItem value="productos">Productos (entra a inventario)</SelectItem>
-                    <SelectItem value="piezas">Piezas / repuestos</SelectItem>
-                    <SelectItem value="otros">Otros gastos</SelectItem>
+                    <SelectItem value="productos">Compra para inventario</SelectItem>
+                    <SelectItem value="proveedores">Factura de proveedor</SelectItem>
+                    <SelectItem value="otros">Gasto general</SelectItem>
                   </SelectGroup></SelectContent>
                 </Select>
               </Field>
@@ -596,12 +651,33 @@ export default function FacturasPage() {
                 </Select>
               </Field>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+              <Field><FieldLabel>N° de factura del proveedor</FieldLabel><Input value={supplierInvoiceNumber} onChange={(event) => setSupplierInvoiceNumber(event.target.value)} /></Field>
+              <Field><FieldLabel>NCF (opcional)</FieldLabel><Input value={ncf} onChange={(event) => setNcf(event.target.value)} /></Field>
+              <Field>
+                <FieldLabel>ITBIS</FieldLabel>
+                <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                  <Checkbox
+                    checked={includesItbis}
+                    onCheckedChange={(checked) => {
+                      const included = checked === true
+                      setIncludesItbis(included)
+                      if (!included) setItbis(0)
+                    }}
+                  />
+                  <Label className="cursor-pointer text-sm font-normal">Incluir ITBIS</Label>
+                </div>
+                {includesItbis && <Input className="mt-2" type="number" min="0" value={itbis} onChange={(event) => setItbis(Number(event.target.value))} />}
+              </Field>
+              <Field><FieldLabel>% de mora si vence</FieldLabel><Input type="number" min="0" value={latePenaltyPercent} onChange={(event) => setLatePenaltyPercent(Number(event.target.value))} /></Field>
+            </div>
             {purchaseKind === "productos" && (
               <Field>
                 <FieldLabel>Destino del inventario</FieldLabel>
                 <Select value={destination} onValueChange={(value: Destination) => { setDestination(value); setLines([emptyLine("productos")]) }}>
                   <SelectTrigger className="md:w-64"><SelectValue /></SelectTrigger>
                   <SelectContent><SelectGroup>
+                    <SelectItem value="none">Ninguno</SelectItem>
                     <SelectItem value="products">Productos</SelectItem>
                     <SelectItem value="armacen">Almacén</SelectItem>
                   </SelectGroup></SelectContent>
@@ -622,7 +698,6 @@ export default function FacturasPage() {
                 <Plus data-icon="inline-start" /> Agregar línea
               </Button>
             </div>
-
             {lines.map((line, index) => (
               <Card key={line.id}>
                 <CardHeader className="pb-3">
@@ -649,24 +724,37 @@ export default function FacturasPage() {
                       {line.mode === "existing" ? (
                         <div className="md:col-span-2">
                           <Label>Producto</Label>
-                          <Select value={line.productId} onValueChange={(value) => chooseExistingProduct(line.id, value)}>
-                            <SelectTrigger><SelectValue placeholder="Seleccionar producto" /></SelectTrigger>
-                            <SelectContent><SelectGroup>
-                              {availableProducts.map((product) => <SelectItem key={product.id} value={product.id}>{product.name} · stock {product.stock}</SelectItem>)}
-                            </SelectGroup></SelectContent>
-                          </Select>
+                          <ProductSearchSelect products={availableProducts} value={line.productId} onChange={(productId) => chooseExistingProduct(line.id, productId)} />
                         </div>
                       ) : (
                         <>
                           <div><Label>Nombre</Label><Input value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div>
                           <div><Label>SKU</Label><Input value={line.sku} onChange={(event) => updateLine(line.id, { sku: event.target.value })} /></div>
+                          <div>
+                            <Label>Tipo de producto</Label>
+                            <div className="flex gap-2">
+                              <Input
+                                list="saved-product-types"
+                                placeholder="Ej: Oficina, Limpieza, Repuestos"
+                                value={line.category}
+                                onChange={(event) => updateLine(line.id, { category: event.target.value })}
+                              />
+                              <Button type="button" variant="outline" size="icon" title="Guardar tipo para reutilizar" onClick={() => saveProductType(line.category)}>
+                                <Plus className="h-4 w-4" />
+                                <span className="sr-only">Guardar tipo de producto</span>
+                              </Button>
+                            </div>
+                          </div>
+                          <datalist id="saved-product-types">
+                            {savedProductTypes.map((productType) => <option key={productType} value={productType} />)}
+                          </datalist>
                         </>
                       )}
                       <div><Label>Cantidad</Label><Input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })} /></div>
                     </div>
                   ) : (
                     <div className="grid gap-4 md:grid-cols-3">
-                      <div className="md:col-span-2"><Label>Concepto / descripción</Label><Input placeholder="Ej: Pantalla iPhone 12 Pro Max, envío, cargador..." value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div>
+                      <div className="md:col-span-2"><Label>Concepto / descripción</Label><Input placeholder="Ej: Materiales, transporte, servicio o suministro..." value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div>
                       <div><Label>Cantidad</Label><Input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })} /></div>
                     </div>
                   )}
@@ -686,7 +774,8 @@ export default function FacturasPage() {
 
           {paymentType === "credito" && (
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><Label>Abono inicial (deja en 0 si es 100% a crédito)</Label><Input type="number" min="0" max={subtotal} value={amountPaid} onChange={(event) => setAmountPaid(Number(event.target.value))} /></div>
+              <div><Label>Abono inicial (deja en 0 si es 100% a crédito)</Label><Input type="number" min="0" max={total} value={amountPaid} onChange={(event) => setAmountPaid(Number(event.target.value))} /></div>
+              <div><Label>Días de crédito</Label><Input type="number" min="0" value={creditDays} onChange={(event) => setCreditDays(event.target.value === "" ? "" : Number(event.target.value))} /></div>
               <div><Label>Fecha límite / vencimiento</Label><Input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></div>
             </div>
           )}
@@ -696,7 +785,7 @@ export default function FacturasPage() {
           <div className="w-full overflow-hidden rounded-lg border bg-card p-4">
             <div className="flex items-center gap-2"><Receipt className="size-4" /><h4 className="text-sm font-medium tracking-tight">Resumen de factura</h4></div>
             <div className="mt-3 grid w-full gap-2 md:grid-cols-3">
-              <div className="w-full rounded-lg border bg-muted/40 p-3 text-left"><p className="text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">Total</p><p className="mt-1 text-sm font-semibold text-foreground sm:text-base">{money(subtotal)}</p></div>
+              <div className="w-full rounded-lg border bg-muted/40 p-3 text-left"><p className="text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">Subtotal + ITBIS</p><p className="mt-1 text-sm font-semibold text-foreground sm:text-base">{money(total)}</p></div>
               <div className="w-full rounded-lg border bg-muted/40 p-3 text-left"><p className="text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">Pagado</p><p className="mt-1 text-sm font-semibold text-foreground sm:text-base">{money(effectivePaid)}</p></div>
               <div className="w-full rounded-lg border bg-muted/40 p-3 text-left"><p className="text-[10px] uppercase tracking-wide text-muted-foreground sm:text-xs">Quedará debiendo</p><p className="mt-1 text-sm font-semibold text-foreground sm:text-base">{money(debtCreated)}</p></div>
             </div>
@@ -815,11 +904,15 @@ export default function FacturasPage() {
             <div className="flex flex-col gap-4">
               <div className="grid gap-2 text-sm sm:grid-cols-2">
                 <p><span className="text-muted-foreground">Proveedor:</span> {detailPurchase.supplierName}</p>
+                <p><span className="text-muted-foreground">Factura proveedor:</span> {detailPurchase.supplierInvoiceNumber || "—"}</p>
+                <p><span className="text-muted-foreground">NCF:</span> {detailPurchase.ncf || "—"}</p>
                 <p><span className="text-muted-foreground">Fecha:</span> {formatDate(detailPurchase.date)}</p>
                 <p><span className="text-muted-foreground">Tipo:</span> {kindLabel(detailPurchase.purchaseKind)}</p>
                 <p><span className="text-muted-foreground">Condición:</span> {detailPurchase.paymentType === "credito" ? "Crédito" : "Contado"}</p>
                 {detailPurchase.dueDate && <p><span className="text-muted-foreground">Vence:</span> {formatDate(detailPurchase.dueDate)}</p>}
                 <p><span className="text-muted-foreground">Estado:</span> {statusBadge(detailPurchase)}</p>
+                <p><span className="text-muted-foreground">ITBIS:</span> {money(detailPurchase.itbis || 0)}</p>
+                {isOverdue(detailPurchase) && <p className="text-red-500"><span className="text-muted-foreground">Mora:</span> {money(calculateLateFee(detailPurchase))}</p>}
               </div>
               <Table>
                 <TableHeader><TableRow><TableHead>Concepto</TableHead><TableHead className="text-right">Cant.</TableHead><TableHead className="text-right">Costo</TableHead><TableHead className="text-right">Total</TableHead></TableRow></TableHeader>
