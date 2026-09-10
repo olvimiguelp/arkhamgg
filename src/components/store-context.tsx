@@ -31,6 +31,7 @@ import {
 } from "@/lib/supabase-connection-utils"
 import { useToast } from "@/hooks/use-toast"
 import type { RealtimeChannel } from "@supabase/supabase-js"
+import { useLocation } from "react-router-dom"
 import { broadcastRealtimeTableChange } from "@/hooks/use-realtime-table-refresh"
 import type { RepairPhoto } from "@/lib/repair-photo-storage"
 
@@ -929,6 +930,8 @@ const USERS: UserCredentials[] = []
 
 const INITIAL_PRODUCTS: Product[] = []
 
+const SALES_INITIAL_PRODUCT_LIMIT = 20
+
 const INITIAL_SUPPLIERS: Supplier[] = []
 
 const INITIAL_CUSTOMERS: Customer[] = []
@@ -941,6 +944,8 @@ const INITIAL_EXPENSES: Expense[] = []
 
 interface StoreContextType {
   products: Product[]
+  searchProducts: (search: string) => Promise<Product[]>
+  loadMoreProducts: () => Promise<number>
   sales: Sale[]
   suppliers: Supplier[]
   customers: Customer[]
@@ -1036,6 +1041,8 @@ interface StoreContextType {
 const StoreContext = createContext<StoreContextType | undefined>(undefined)
 
 export function StoreProvider({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation()
+  const isSalesRoute = pathname === "/ventas" || pathname === "/ventas-por-mayor"
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS)
   const [sales, setSales] = useState<Sale[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -1057,6 +1064,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
   const [cart, setCartState] = useState<CartItem[]>([])
+  const productsLoadedRef = useRef(0)
+  const almacenProductsLoadedRef = useRef(0)
   const { toast } = useToast()
 
   const getTenantAdminId = useCallback(() => {
@@ -1478,14 +1487,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     try {
       if (!currentUser) {
         setProducts([])
+        productsLoadedRef.current = 0
+        almacenProductsLoadedRef.current = 0
         return
       }
       if (isTableMissing("products")) return
 
       const supabase = createClient()
       console.log("[v0] Fetching products...")
+      const productQuery = supabase.from("products").select("*")
       const { data, error } = await withTenantFilter(
-        supabase.from("products").select("*"),
+        isSalesRoute ? productQuery.limit(SALES_INITIAL_PRODUCT_LIMIT) : productQuery,
       ).order("created_at", { ascending: false })
 
       if (error) {
@@ -1499,7 +1511,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
       if (!isTableMissing("armacen")) {
         const armacenQuery = withTenantFilter(supabase.from("armacen").select("*"))
-        const { data: armacenData, error: armacenError } = await armacenQuery.order("created_at", {
+        const scopedAlmacenQuery = isSalesRoute ? armacenQuery.limit(SALES_INITIAL_PRODUCT_LIMIT) : armacenQuery
+        const { data: armacenData, error: armacenError } = await scopedAlmacenQuery.order("created_at", {
           ascending: false,
         })
 
@@ -1514,6 +1527,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (data) {
         console.log("[v0] Products fetched successfully:", data.length, "products")
         const formattedProducts: Product[] = data.map((row) => mapProductFromDB(row, "products"))
+        productsLoadedRef.current = formattedProducts.length
+        almacenProductsLoadedRef.current = formattedAlmacenProducts.length
         const mergedProducts = mergeInventoryProducts(formattedProducts, formattedAlmacenProducts)
         console.log("[v0] Setting products state with", mergedProducts.length, "products")
         setProducts(mergedProducts)
@@ -1526,7 +1541,75 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         console.warn("[v0] Could not fetch products:", error)
       }
     }
-  }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
+  }, [currentUser?.id, isSalesRoute, isTableMissing, markMissingTable, withTenantFilter])
+
+  const loadMoreProducts = useCallback(async () => {
+    if (!currentUser || !isSalesRoute) return 0
+
+    const supabase = createClient()
+    const nextProductsQuery = withTenantFilter(
+      supabase
+        .from("products")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .range(productsLoadedRef.current, productsLoadedRef.current + 24),
+    )
+    const nextAlmacenQuery = !isTableMissing("armacen")
+      ? withTenantFilter(
+          supabase
+            .from("armacen")
+            .select("*")
+            .order("created_at", { ascending: false })
+            .range(almacenProductsLoadedRef.current, almacenProductsLoadedRef.current + 24),
+        )
+      : null
+
+    const [productsResult, armacenResult] = await Promise.all([nextProductsQuery, nextAlmacenQuery])
+    if (productsResult.error) throw productsResult.error
+    if (armacenResult?.error && !isMissingTableError(armacenResult.error)) throw armacenResult.error
+
+    const newProducts = (productsResult.data || []).map((row: any) => mapProductFromDB(row, "products"))
+    const newAlmacenProducts = (armacenResult?.data || []).map((row: any) => mapProductFromDB(row, "armacen"))
+    productsLoadedRef.current += newProducts.length
+    almacenProductsLoadedRef.current += newAlmacenProducts.length
+    const loadedCount = newProducts.length + newAlmacenProducts.length
+
+    if (loadedCount > 0) {
+      setProducts((current) => [...current, ...mergeInventoryProducts(newProducts, newAlmacenProducts)])
+    }
+    return loadedCount
+  }, [currentUser, isSalesRoute, isTableMissing, withTenantFilter])
+
+  const searchProducts = useCallback(async (search: string) => {
+    const normalizedSearch = search.trim()
+    if (!currentUser || !normalizedSearch) return []
+
+    const supabase = createClient()
+    const pattern = `%${normalizedSearch.replace(/[%_]/g, "\\$&")}%`
+    const productQuery = withTenantFilter(
+      supabase.from("products").select("*").or(`name.ilike.${pattern},sku.ilike.${pattern}`),
+    )
+    const armacenQuery = !isTableMissing("armacen")
+      ? withTenantFilter(
+          supabase.from("armacen").select("*").or(`name.ilike.${pattern},sku.ilike.${pattern}`),
+        )
+      : null
+
+    const [productsResult, armacenResult] = await Promise.all([productQuery, armacenQuery])
+    if (productsResult.error) throw productsResult.error
+    if (armacenResult?.error && !isMissingTableError(armacenResult.error)) throw armacenResult.error
+
+    const foundProducts = (productsResult.data || []).map((row: any) => mapProductFromDB(row, "products"))
+    const foundAlmacen = (armacenResult?.data || []).map((row: any) => mapProductFromDB(row, "armacen"))
+    const found = mergeInventoryProducts(foundProducts, foundAlmacen)
+
+    setProducts((current) => {
+      const byId = new Map(current.map((product) => [product.id, product]))
+      found.forEach((product) => byId.set(product.id, product))
+      return Array.from(byId.values())
+    })
+    return found
+  }, [currentUser, isTableMissing, withTenantFilter])
 
   const fetchRepairs = useCallback(async () => {
     try {
@@ -5967,6 +6050,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     <StoreContext.Provider
       value={{
         products,
+        searchProducts,
+        loadMoreProducts,
         sales,
         suppliers,
         customers,

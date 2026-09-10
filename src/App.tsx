@@ -79,11 +79,11 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <StoreProvider>
-          <Toaster />
-          <Sonner />
-          <SidebarProvider>
-            <AppRouter>
+        <AppRouter>
+          <StoreProvider>
+            <Toaster />
+            <Sonner />
+            <SidebarProvider>
                 <Routes>
               {/* Rutas públicas (sin Layout) */}
               <Route path="/" element={<Navigate to="/login" replace />} />
@@ -146,9 +146,9 @@ const App = () => {
                 }
               />
                 </Routes>
-            </AppRouter>
-          </SidebarProvider>
-        </StoreProvider>
+            </SidebarProvider>
+          </StoreProvider>
+        </AppRouter>
       </TooltipProvider>
     </QueryClientProvider>
   );

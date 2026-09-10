@@ -149,6 +149,8 @@ export default function SalesPage() {
   const isWholesalePage = location.pathname.startsWith("/ventas-por-mayor")
   const {
     products,
+    searchProducts,
+    loadMoreProducts,
     sales,
     addSale,
     updateSale,
@@ -206,6 +208,9 @@ export default function SalesPage() {
   const { toast } = useToast()
   const supabase = useMemo(() => createClient(), [])
   const [searchTerm, setSearchTerm] = useState("")
+  const [visibleProductLimit, setVisibleProductLimit] = useState(20)
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false)
+  const [hasMoreProducts, setHasMoreProducts] = useState(true)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [showAlmacenProductsOnly, setShowAlmacenProductsOnly] = useState(false)
   const [almacenCategoryFilter, setAlmacenCategoryFilter] = useState<string>("all")
@@ -219,6 +224,19 @@ export default function SalesPage() {
   const [showInvoiceDialog, setShowInvoiceDialog] = useState(false)
   const [currentInvoice, setCurrentInvoice] = useState<Sale | null>(null)
   const [editingQueuedSale, setEditingQueuedSale] = useState<Sale | null>(null)
+
+  useEffect(() => {
+    const query = searchTerm.trim()
+    if (!query) return
+
+    const timeout = window.setTimeout(() => {
+      void searchProducts(query).catch((error) => {
+        console.warn("No se pudieron buscar productos:", error)
+      })
+    }, 350)
+
+    return () => window.clearTimeout(timeout)
+  }, [searchProducts, searchTerm])
 
   useEffect(() => {
     const navigationState = location.state as { returnedInvoice?: Sale } | null
@@ -1463,6 +1481,26 @@ export default function SalesPage() {
     showAlmacenProductsOnly,
   ])
 
+  const productsToDisplay = useMemo(
+    () => (searchTerm.trim() ? filteredProducts : filteredProducts.slice(0, visibleProductLimit)),
+    [filteredProducts, searchTerm, visibleProductLimit],
+  )
+
+  const handleLoadMoreProducts = async () => {
+    if (loadingMoreProducts || !hasMoreProducts) return
+
+    setLoadingMoreProducts(true)
+    try {
+      const loadedCount = await loadMoreProducts()
+      if (loadedCount === 0) setHasMoreProducts(false)
+      else setVisibleProductLimit((current) => current + 25)
+    } catch (error) {
+      console.warn("No se pudieron cargar más productos:", error)
+    } finally {
+      setLoadingMoreProducts(false)
+    }
+  }
+
   const activeSalesTab = currentTab === "history" ? "history" : "pos"
 
   const almacenProductIds = useMemo(() => {
@@ -2528,10 +2566,22 @@ export default function SalesPage() {
               {/* @ts-ignore-next-line */}
               { /* import dynamically to avoid TS errors if path resolution differs */}
               <ProductGrid
-                products={filteredProducts}
+                products={productsToDisplay}
                 onCardClick={addToCart}
                 priceMode={isWholesalePage ? "wholesale" : "sell"}
               />
+              {!searchTerm.trim() && hasMoreProducts && (
+                <div className="flex justify-center py-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleLoadMoreProducts()}
+                    disabled={loadingMoreProducts}
+                  >
+                    {loadingMoreProducts ? "Cargando..." : "Cargar 25 productos más"}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
