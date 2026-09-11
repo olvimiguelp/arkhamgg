@@ -1586,21 +1586,43 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
     const supabase = createClient()
     const pattern = `%${normalizedSearch.replace(/[%_]/g, "\\$&")}%`
-    const productQuery = withTenantFilter(
-      supabase.from("products").select("*").or(`name.ilike.${pattern},sku.ilike.${pattern}`),
+    const productNameQuery = withTenantFilter(
+      supabase.from("products").select("*").ilike("name", pattern),
     )
-    const armacenQuery = !isTableMissing("armacen")
-      ? withTenantFilter(
-          supabase.from("armacen").select("*").or(`name.ilike.${pattern},sku.ilike.${pattern}`),
-        )
+    const productSkuQuery = withTenantFilter(
+      supabase.from("products").select("*").ilike("sku", pattern),
+    )
+    const armacenNameQuery = !isTableMissing("armacen")
+      ? withTenantFilter(supabase.from("armacen").select("*").ilike("name", pattern))
+      : null
+    const armacenSkuQuery = !isTableMissing("armacen")
+      ? withTenantFilter(supabase.from("armacen").select("*").ilike("sku", pattern))
       : null
 
-    const [productsResult, armacenResult] = await Promise.all([productQuery, armacenQuery])
-    if (productsResult.error) throw productsResult.error
-    if (armacenResult?.error && !isMissingTableError(armacenResult.error)) throw armacenResult.error
+    const [productNameResult, productSkuResult, armacenNameResult, armacenSkuResult] = await Promise.all([
+      productNameQuery,
+      productSkuQuery,
+      armacenNameQuery,
+      armacenSkuQuery,
+    ])
+    if (productNameResult.error) throw productNameResult.error
+    if (productSkuResult.error) throw productSkuResult.error
+    if (armacenNameResult?.error && !isMissingTableError(armacenNameResult.error)) throw armacenNameResult.error
+    if (armacenSkuResult?.error && !isMissingTableError(armacenSkuResult.error)) throw armacenSkuResult.error
 
-    const foundProducts = (productsResult.data || []).map((row: any) => mapProductFromDB(row, "products"))
-    const foundAlmacen = (armacenResult?.data || []).map((row: any) => mapProductFromDB(row, "armacen"))
+    const mergeRowsById = (rows: any[]) => {
+      const rowsById = new Map<string, any>()
+      rows.forEach((row) => rowsById.set(String(row.id), row))
+      return Array.from(rowsById.values())
+    }
+    const foundProducts = mergeRowsById([
+      ...(productNameResult.data || []),
+      ...(productSkuResult.data || []),
+    ]).map((row: any) => mapProductFromDB(row, "products"))
+    const foundAlmacen = mergeRowsById([
+      ...(armacenNameResult?.data || []),
+      ...(armacenSkuResult?.data || []),
+    ]).map((row: any) => mapProductFromDB(row, "armacen"))
     const found = mergeInventoryProducts(foundProducts, foundAlmacen)
 
     setProducts((current) => {
