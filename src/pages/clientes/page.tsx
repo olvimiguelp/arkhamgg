@@ -87,13 +87,13 @@ import {
 } from "@/lib/credit-sale-utils"
 import type { SaveClientInvoiceOptions } from "@/lib/invoice-storage"
 
-type ReportPeriod = "general" | "year" | "month" | "day"
+type ReportPeriod = "general" | "year" | "month" | "range"
 
 const REPORT_PERIOD_LABELS: Record<ReportPeriod, string> = {
   general: "Todo el historial",
   year: "Año",
   month: "Mes",
-  day: "Día",
+  range: "Rango de fechas",
 }
 const normalizeIdList = (values: string[]) => Array.from(new Set(values)).sort()
 
@@ -358,7 +358,8 @@ export default function CustomersPage() {
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>("general")
   const [reportYear, setReportYear] = useState<string>(() => String(new Date().getFullYear()))
   const [reportMonth, setReportMonth] = useState<string>(() => getTodayMonthValue())
-  const [reportDay, setReportDay] = useState<string>(() => getTodayDateValue())
+  const [reportStartDate, setReportStartDate] = useState<string>(() => getTodayDateValue())
+  const [reportEndDate, setReportEndDate] = useState<string>(() => getTodayDateValue())
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
 
 
@@ -1325,30 +1326,45 @@ export default function CustomersPage() {
       }
     }
 
-    const parsedDay = new Date(`${reportDay}T00:00:00`)
-    if (Number.isNaN(parsedDay.getTime())) return null
-    const year = parsedDay.getFullYear()
-    const month = parsedDay.getMonth()
-    const day = parsedDay.getDate()
+    const parsedStartDate = new Date(`${reportStartDate}T00:00:00`)
+    const parsedEndDate = new Date(`${reportEndDate}T00:00:00`)
+    if (Number.isNaN(parsedStartDate.getTime()) || Number.isNaN(parsedEndDate.getTime())) return null
+    if (parsedStartDate > parsedEndDate) return null
     return {
-      start: new Date(year, month, day, 0, 0, 0, 0),
-      end: new Date(year, month, day, 23, 59, 59, 999),
+      start: new Date(
+        parsedStartDate.getFullYear(),
+        parsedStartDate.getMonth(),
+        parsedStartDate.getDate(),
+        0,
+        0,
+        0,
+        0,
+      ),
+      end: new Date(
+        parsedEndDate.getFullYear(),
+        parsedEndDate.getMonth(),
+        parsedEndDate.getDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
     }
-  }, [reportDay, reportMonth, reportPeriod, reportYear])
+  }, [reportEndDate, reportMonth, reportPeriod, reportStartDate, reportYear])
 
   const getCurrentPeriodLabel = useCallback(() => {
     if (reportPeriod === "year") return `Año ${reportYear}`
     if (reportPeriod === "month") return `Mes ${reportMonth}`
-    if (reportPeriod === "day") return `Día ${reportDay}`
+    if (reportPeriod === "range") return `${reportStartDate} a ${reportEndDate}`
     return REPORT_PERIOD_LABELS.general
-  }, [reportDay, reportMonth, reportPeriod, reportYear])
+  }, [reportEndDate, reportMonth, reportPeriod, reportStartDate, reportYear])
 
   const generateReport = async () => {
     if (!currentCustomer) return
 
     const periodRange = getCustomReportRange()
     if (!periodRange) {
-      toast.error("Seleccione un periodo válido para generar el PDF")
+      toast.error("Seleccione un rango de fechas válido para generar el PDF")
       return
     }
 
@@ -2064,7 +2080,7 @@ export default function CustomersPage() {
                     <SelectItem value="general">Todo el historial</SelectItem>
                     <SelectItem value="year">Año</SelectItem>
                     <SelectItem value="month">Mes</SelectItem>
-                    <SelectItem value="day">Día</SelectItem>
+                    <SelectItem value="range">Rango de fechas</SelectItem>
                   </SelectContent>
                 </Select>
                 {reportPeriod === "year" && (
@@ -2086,13 +2102,24 @@ export default function CustomersPage() {
                     className="h-8 w-full md:w-[160px]"
                   />
                 )}
-                {reportPeriod === "day" && (
-                  <Input
-                    type="date"
-                    value={reportDay}
-                    onChange={(event) => setReportDay(event.target.value)}
-                    className="h-8 w-full md:w-[170px]"
-                  />
+                {reportPeriod === "range" && (
+                  <>
+                    <Input
+                      type="date"
+                      value={reportStartDate}
+                      onChange={(event) => setReportStartDate(event.target.value)}
+                      className="h-8 w-full md:w-[155px]"
+                      aria-label="Fecha inicial"
+                    />
+                    <span className="text-sm text-muted-foreground">a</span>
+                    <Input
+                      type="date"
+                      value={reportEndDate}
+                      onChange={(event) => setReportEndDate(event.target.value)}
+                      className="h-8 w-full md:w-[155px]"
+                      aria-label="Fecha final"
+                    />
+                  </>
                 )}
 
                 <Button
