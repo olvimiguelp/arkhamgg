@@ -167,6 +167,8 @@ export default function AlmacenPage() {
   const [formData, setFormData] = useState<FormState>(INITIAL_FORM)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [selectedSharedImage, setSelectedSharedImage] = useState<Product | null>(null)
+  const [imageInputKey, setImageInputKey] = useState(0)
   const [isOptimizingImages, setIsOptimizingImages] = useState(false)
   const [imageOptimizationProgress, setImageOptimizationProgress] = useState<{
     total: number
@@ -284,6 +286,15 @@ export default function AlmacenPage() {
   const imagesToOptimize = almacenProducts.filter(
     (product) => Boolean(product.imageUrl) && !isProductImagePairOptimized(product.imageUrl, product.imageThumbnailUrl),
   )
+  const availableAlmacenImages = useMemo(() => {
+    const imagesByUrl = new Map<string, Product>()
+    for (const product of almacenProducts) {
+      if (product.imageUrl && !imagesByUrl.has(product.imageUrl)) {
+        imagesByUrl.set(product.imageUrl, product)
+      }
+    }
+    return Array.from(imagesByUrl.values())
+  }, [almacenProducts])
   const editingProduct = useMemo(
     () => (editingId ? almacenProducts.find((product) => product.id === editingId) || null : null),
     [almacenProducts, editingId],
@@ -374,6 +385,8 @@ export default function AlmacenPage() {
     setEditingId(null)
     setImageFile(null)
     setImagePreview(null)
+    setSelectedSharedImage(null)
+    setImageInputKey((key) => key + 1)
   }, [])
 
   const openDialog = useCallback(() => {
@@ -434,6 +447,8 @@ export default function AlmacenPage() {
       supplier: product.supplier || "",
     })
     setImageFile(null)
+    setSelectedSharedImage(null)
+    setImageInputKey((key) => key + 1)
     setImagePreview(product.imageThumbnailUrl || product.imageUrl || null)
     setIsDialogOpen(true)
   }
@@ -723,6 +738,9 @@ export default function AlmacenPage() {
         uploadedImageThumbnailUrl = result.thumbnailUrl
       }
 
+      const selectedImageUrl = selectedSharedImage?.imageUrl
+      const selectedImageThumbnailUrl = selectedSharedImage?.imageThumbnailUrl
+
       if (editingId) {
         await updateProduct(editingId, {
           sku: resolvedSku,
@@ -736,8 +754,8 @@ export default function AlmacenPage() {
           supplier: formData.supplier,
           capacity: editingProduct?.capacity,
           imei: normalizedImei || undefined,
-          imageUrl: uploadedImageUrl || editingProduct?.imageUrl,
-          imageThumbnailUrl: uploadedImageThumbnailUrl || editingProduct?.imageThumbnailUrl,
+          imageUrl: uploadedImageUrl || selectedImageUrl || editingProduct?.imageUrl,
+          imageThumbnailUrl: uploadedImageThumbnailUrl || selectedImageThumbnailUrl || editingProduct?.imageThumbnailUrl,
         })
 
         toast({
@@ -757,8 +775,8 @@ export default function AlmacenPage() {
           supplier: formData.supplier,
           capacity: undefined,
           imei: normalizedImei || undefined,
-          imageUrl: uploadedImageUrl,
-          imageThumbnailUrl: uploadedImageThumbnailUrl,
+          imageUrl: uploadedImageUrl || selectedImageUrl,
+          imageThumbnailUrl: uploadedImageThumbnailUrl || selectedImageThumbnailUrl,
         })
 
         setLabelProduct({
@@ -1546,12 +1564,46 @@ export default function AlmacenPage() {
 
             <div className="space-y-2">
               <Label>Imagen del producto (opcional)</Label>
+              <Select
+                value={imageFile ? "uploaded" : selectedSharedImage?.id || "none"}
+                onValueChange={(value) => {
+                  if (value === "uploaded") return
+                  const product = value === "none"
+                    ? null
+                    : availableAlmacenImages.find((imageProduct) => imageProduct.id === value) || null
+                  setSelectedSharedImage(product)
+                  setImageFile(null)
+                  setImageInputKey((key) => key + 1)
+                  setImagePreview(
+                    product?.imageThumbnailUrl ||
+                    product?.imageUrl ||
+                    editingProduct?.imageThumbnailUrl ||
+                    editingProduct?.imageUrl ||
+                    null,
+                  )
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Subir imagen o reutilizar una del almacén" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No reutilizar imagen</SelectItem>
+                  {imageFile && <SelectItem value="uploaded">Usar archivo subido</SelectItem>}
+                  {availableAlmacenImages.map((imageProduct) => (
+                    <SelectItem key={imageProduct.id} value={imageProduct.id}>
+                      {imageProduct.name} - {imageProduct.sku}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <div className="flex flex-wrap items-center gap-4">
                 <Input
+                  key={imageInputKey}
                   type="file"
                   accept="image/*"
                   onChange={(event) => {
                     const file = event.target.files?.[0] || null
+                    setSelectedSharedImage(null)
                     setImageFile(file)
                     setImagePreview(file ? URL.createObjectURL(file) : editingProduct?.imageThumbnailUrl || editingProduct?.imageUrl || null)
                   }}
@@ -1560,6 +1612,9 @@ export default function AlmacenPage() {
                   <img src={imagePreview} alt="Vista previa del producto" className="h-16 w-16 rounded-md object-cover" />
                 )}
               </div>
+              <p className="text-sm text-muted-foreground">
+                Puedes reutilizar una imagen ya guardada en otro producto del almacén.
+              </p>
             </div>
 
             <div className="space-y-2">

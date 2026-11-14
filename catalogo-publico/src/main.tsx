@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
+import catalogLogo from "../../public/Logo festivo 049 Móvil con gorro de Santa.png"
 import { invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
 import { createClient } from "./lib/supabase/client"
 import "./styles.css"
+
+for (const rel of ["icon", "apple-touch-icon"]) {
+  let link = document.head.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!link) {
+    link = document.createElement("link")
+    link.rel = rel
+    document.head.append(link)
+  }
+  link.href = catalogLogo
+  link.type = "image/png"
+}
 
 type Product = {
   id: string
@@ -525,7 +537,7 @@ function CatalogoPublico() {
     <div className="catalog-shell">
       <header className="site-header">
         <div className="header-inner">
-          <div className="brand-mark">A</div>
+          <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
           <div className="brand-copy"><span>CATÁLOGO</span><strong>{business}</strong></div>
           {canUseCustomerAccounts && (customerSession ? (
             <div className="account-actions">
