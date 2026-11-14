@@ -203,9 +203,9 @@ export default function EmpleadosPage() {
   const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
   const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
   const [publicCatalogSource, setPublicCatalogSource] = useState<PublicCatalogSource>("products")
-  const [publicCatalogCategory, setPublicCatalogCategory] = useState("")
+  const [publicCatalogCategories, setPublicCatalogCategories] = useState<string[]>([])
   const [isAlmacenCatalogDialogOpen, setIsAlmacenCatalogDialogOpen] = useState(false)
-  const [selectedAlmacenCategory, setSelectedAlmacenCategory] = useState("")
+  const [selectedAlmacenCategories, setSelectedAlmacenCategories] = useState<string[]>([])
   const almacenCatalogCategories = useMemo(() => {
     const options = new Map(ALMACEN_CATEGORY_OPTIONS.map(({ value, label }) => [String(value), label]))
     products.filter((product) => product.sourceTable === "armacen" ||
@@ -244,8 +244,14 @@ export default function EmpleadosPage() {
     return activeAdmins[0] ?? employees.find((employee) => employee.role === "admin") ?? null
   }, [employees])
 
-  const createPublicCatalogLink = async (priceMode: "normal" | "wholesale", sourceTable: PublicCatalogSource = "products", categoryFilter = "") => {
-    if (sourceTable === "armacen" && !categoryFilter) return
+  const createPublicCatalogLink = async (
+    priceMode: "normal" | "wholesale",
+    sourceTable: PublicCatalogSource = "products",
+    selectedCategories: string[] = [],
+  ) => {
+    const categories = [...new Set(selectedCategories)].sort()
+    if (sourceTable === "armacen" && categories.length === 0) return
+    const categoryFilter = categories.length > 1 ? `json:${JSON.stringify(categories)}` : categories[0] || ""
     const ownerAdminId = String(currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "").trim()
     if (!ownerAdminId) return
     setIsCreatingPublicCatalog(true)
@@ -253,7 +259,7 @@ export default function EmpleadosPage() {
     const showCatalogLink = (url: string) => {
       setPublicCatalogType(priceMode)
       setPublicCatalogSource(sourceTable)
-      setPublicCatalogCategory(categoryFilter)
+      setPublicCatalogCategories(categories)
       setPublicCatalogLink(url)
       setIsAlmacenCatalogDialogOpen(false)
       setIsPublicCatalogDialogOpen(true)
@@ -266,7 +272,7 @@ export default function EmpleadosPage() {
         const isAlmacen = product.sourceTable ? product.sourceTable === "armacen" :
           Boolean(product.boxNumber) || isAlmacenCategory(product.category)
         return sourceTable === "armacen"
-          ? isAlmacen && getAlmacenCategoryFilterValue(product.category) === categoryFilter
+          ? isAlmacen && categories.includes(getAlmacenCategoryFilterValue(product.category))
           : !isAlmacen
       })
       const productIds = catalogProducts
@@ -1142,7 +1148,7 @@ export default function EmpleadosPage() {
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
         <DialogContent className="w-[95vw] max-w-[520px]">
           <DialogHeader>
-            <DialogTitle>{!publicCatalogLink ? "Compartir catálogo" : publicCatalogSource === "armacen" ? `Almacén: ${getAlmacenCategoryLabel(publicCatalogCategory)}` : publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
+            <DialogTitle>{!publicCatalogLink ? "Compartir catálogo" : publicCatalogSource === "armacen" ? `Almacén: ${publicCatalogCategories.map(getAlmacenCategoryLabel).join(", ")}` : publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
             <DialogDescription>{publicCatalogLink ? "Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva. Este enlace es permanente mientras el catálogo permanezca activo." : "Elige el catálogo que deseas compartir. Para el almacén, selecciona la categoría que verá tu cliente."}</DialogDescription>
           </DialogHeader>
           {publicCatalogLink && <div className="flex gap-2">
@@ -1152,7 +1158,7 @@ export default function EmpleadosPage() {
           <DialogFooter className="flex flex-wrap gap-2">
             <Button onClick={() => void createPublicCatalogLink("normal")} disabled={isCreatingPublicCatalog}>Catálogo normal</Button>
             <Button onClick={() => void createPublicCatalogLink("wholesale")} disabled={isCreatingPublicCatalog}>Catálogo por mayor</Button>
-            <Button onClick={() => { setSelectedAlmacenCategory(""); setIsPublicCatalogDialogOpen(false); setIsAlmacenCatalogDialogOpen(true) }} disabled={isCreatingPublicCatalog}>Almacén</Button>
+            <Button onClick={() => { setSelectedAlmacenCategories([]); setIsPublicCatalogDialogOpen(false); setIsAlmacenCatalogDialogOpen(true) }} disabled={isCreatingPublicCatalog}>Almacén</Button>
           </DialogFooter>
           {isCreatingPublicCatalog && <p role="status" className="text-sm text-muted-foreground">Generando enlace…</p>}
         </DialogContent>
@@ -1162,18 +1168,27 @@ export default function EmpleadosPage() {
         <DialogContent className="w-[95vw] max-w-[520px]">
           <DialogHeader>
             <DialogTitle>¿Qué categoría del almacén deseas mostrar?</DialogTitle>
-            <DialogDescription>El enlace mostrará únicamente los productos de la categoría seleccionada.</DialogDescription>
+            <DialogDescription>Marca una o varias categorías. El enlace mostrará únicamente esos productos.</DialogDescription>
           </DialogHeader>
-          <Label htmlFor="almacen-catalog-category">Categoría</Label>
-          <Select value={selectedAlmacenCategory} onValueChange={setSelectedAlmacenCategory} disabled={isCreatingPublicCatalog}>
-            <SelectTrigger id="almacen-catalog-category"><SelectValue placeholder="Selecciona una categoría" /></SelectTrigger>
-            <SelectContent>
-              {almacenCatalogCategories.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+          <div className="max-h-[50vh] space-y-3 overflow-y-auto py-1">
+            {almacenCatalogCategories.map(({ value, label }) => (
+              <label key={value} className="flex cursor-pointer items-center gap-3 rounded-md border p-3">
+                <Checkbox
+                  checked={selectedAlmacenCategories.includes(value)}
+                  disabled={isCreatingPublicCatalog}
+                  onCheckedChange={(checked) => setSelectedAlmacenCategories((current) =>
+                    checked === true
+                      ? [...new Set([...current, value])]
+                      : current.filter((category) => category !== value),
+                  )}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
           <DialogFooter>
             <Button variant="outline" disabled={isCreatingPublicCatalog} onClick={() => { setIsAlmacenCatalogDialogOpen(false); setIsPublicCatalogDialogOpen(true) }}>Volver</Button>
-            <Button disabled={!selectedAlmacenCategory || isCreatingPublicCatalog} onClick={() => void createPublicCatalogLink("normal", "armacen", selectedAlmacenCategory)}>
+            <Button disabled={!selectedAlmacenCategories.length || isCreatingPublicCatalog} onClick={() => void createPublicCatalogLink("normal", "armacen", selectedAlmacenCategories)}>
               {isCreatingPublicCatalog && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Crear enlace
             </Button>
           </DialogFooter>
