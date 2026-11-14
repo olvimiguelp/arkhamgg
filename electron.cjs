@@ -149,11 +149,13 @@ let whatsappReady = false;
 let whatsappQr = null;
 let whatsappInitializing = false;
 let whatsappReconnectTimer = null;
+let whatsappInitializationTimer = null;
 let whatsappReconnectAttempt = 0;
 let whatsappGeneration = 0;
 let appIsQuitting = false;
 const WHATSAPP_RECONNECT_BASE_MS = 5_000;
 const WHATSAPP_RECONNECT_MAX_MS = 60_000;
+const WHATSAPP_INITIALIZATION_TIMEOUT_MS = 90_000;
 const SEND_DELAY_MS = 2 * 60 * 1000;
 const FALLBACK_REMINDER_MESSAGE_TEMPLATE =
   "Hola {{name}}, buenos días.\n\nLe escribimos de 049Movil para informarle que tiene una deuda pendiente de {{debt}} con nosotros. Le solicitamos que pase por una de nuestras sucursales para saldarla o realizar un abono.\n\nGracias por su atención.";
@@ -163,7 +165,7 @@ function getDefaultReminderMessageTemplate() {
 }
 
 function getWhatsAppStatus() {
-  return { ready: whatsappReady, qr: whatsappQr };
+  return { ready: whatsappReady, qr: whatsappQr, connecting: whatsappInitializing };
 }
 
 function broadcastWhatsAppStatus() {
@@ -174,12 +176,18 @@ function broadcastWhatsAppStatus() {
 }
 
 function findChromeExecutable() {
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const localAppData = process.env.LOCALAPPDATA;
   const candidates = [
     process.env.CHROME_EXECUTABLE_PATH,
-    "C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe",
-    "C:\\\\Program Files (x86)\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe",
-    "C:\\\\Program Files\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe",
-    "C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe",
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+    localAppData && path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+    localAppData && path.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
   ].filter(Boolean);
 
   return candidates.find((candidate) => {
@@ -196,8 +204,14 @@ function clearWhatsAppReconnect() {
   whatsappReconnectTimer = null;
 }
 
+function clearWhatsAppInitializationTimeout() {
+  if (whatsappInitializationTimer) clearTimeout(whatsappInitializationTimer);
+  whatsappInitializationTimer = null;
+}
+
 function scheduleWhatsAppReconnect(reason) {
   if (whatsappReconnectTimer || appIsQuitting) return;
+  clearWhatsAppInitializationTimeout();
   whatsappReady = false;
   whatsappQr = null;
   whatsappInitializing = false;
@@ -216,6 +230,17 @@ function initWhatsAppClient() {
   if (whatsappClient || whatsappInitializing || appIsQuitting) return;
   whatsappInitializing = true;
   const generation = ++whatsappGeneration;
+  broadcastWhatsAppStatus();
+
+  whatsappInitializationTimer = setTimeout(() => {
+    if (generation !== whatsappGeneration || whatsappReady || whatsappQr) return;
+    const message = "WhatsApp tardó demasiado en iniciar. Comprueba tu conexión y que Chrome o Edge estén instalados.";
+    console.error(`[whatsapp] ${message}`);
+    BrowserWindow.getAllWindows().forEach((window) => {
+      window.webContents.send("whatsapp:error", message);
+    });
+    scheduleWhatsAppReconnect("initialization timeout");
+  }, WHATSAPP_INITIALIZATION_TIMEOUT_MS);
 
   const authPath = path.join(app.getPath("userData"), "whatsapp-auth");
   const chromeExecutablePath = findChromeExecutable();
@@ -247,6 +272,8 @@ function initWhatsAppClient() {
   whatsappClient.on("qr", (qr) => {
     if (generation !== whatsappGeneration) return;
     clearWhatsAppReconnect();
+    clearWhatsAppInitializationTimeout();
+    whatsappInitializing = false;
     whatsappQr = qr;
     whatsappReady = false;
     broadcastWhatsAppStatus();
@@ -255,6 +282,7 @@ function initWhatsAppClient() {
   whatsappClient.on("ready", () => {
     if (generation !== whatsappGeneration) return;
     clearWhatsAppReconnect();
+    clearWhatsAppInitializationTimeout();
     whatsappReconnectAttempt = 0;
     whatsappInitializing = false;
     whatsappReady = true;
@@ -286,14 +314,15 @@ function initWhatsAppClient() {
       scheduleWhatsAppReconnect(errMsg);
     })
     .finally(() => {
-      if (generation === whatsappGeneration && !whatsappReady && !whatsappQr) {
-        whatsappInitializing = false;
+      if (generation === whatsappGeneration && (whatsappReady || whatsappQr)) {
+        clearWhatsAppInitializationTimeout();
       }
     });
 }
 
 async function resetWhatsAppClient() {
   clearWhatsAppReconnect();
+  clearWhatsAppInitializationTimeout();
   whatsappGeneration += 1;
   if (whatsappClient) {
     try {
@@ -439,4 +468,5 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   appIsQuitting = true;
   clearWhatsAppReconnect();
+  clearWhatsAppInitializationTimeout();
 });

@@ -526,9 +526,10 @@ export default function CustomersPage() {
   const [isConfirmRemindersOpen, setIsConfirmRemindersOpen] = useState(false)
   const [sendScope, setSendScope] = useState<"selected" | "all">("selected")
   const [isWhatsappDialogOpen, setIsWhatsappDialogOpen] = useState(false)
-  const [whatsappStatus, setWhatsappStatus] = useState<{ ready: boolean; qr: string | null }>({
+  const [whatsappStatus, setWhatsappStatus] = useState<{ ready: boolean; qr: string | null; connecting?: boolean }>({
     ready: false,
     qr: null,
+    connecting: false,
   })
   const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState<string>("")
   const [isWhatsappConnecting, setIsWhatsappConnecting] = useState(false)
@@ -4026,11 +4027,11 @@ export default function CustomersPage() {
                   <span className="inline-flex">
                     <Button
                       onClick={handleConnectWhatsapp}
-                      disabled={whatsappBotDisabled || isWhatsappConnecting}
+                      disabled={whatsappBotDisabled || isWhatsappConnecting || whatsappStatus.connecting}
                       className="gap-2"
                     >
-                      {isWhatsappConnecting && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {isWhatsappConnecting ? "Conectando..." : "Conectar WhatsApp"}
+                      {(isWhatsappConnecting || whatsappStatus.connecting) && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {isWhatsappConnecting || whatsappStatus.connecting ? "Conectando..." : "Conectar WhatsApp"}
                     </Button>
                   </span>
                 </TooltipTrigger>
@@ -4044,7 +4045,7 @@ export default function CustomersPage() {
                 <img src={whatsappQrDataUrl} alt="QR WhatsApp" className="h-56 w-56 rounded-md border" />
                 <div className="text-xs text-muted-foreground">El codigo se actualiza automaticamente.</div>
               </>
-            ) : isWhatsappConnecting ? (
+            ) : isWhatsappConnecting || whatsappStatus.connecting ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Generando QR...
