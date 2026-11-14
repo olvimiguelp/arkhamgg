@@ -68,6 +68,7 @@ const money = (value: number) =>
 const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
 const CATALOG_CACHE_TTL_MS = 60 * 1000
+const ORDER_CONFIRMATION_DURATION_MS = 7000
 const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v3:"
 const CUSTOMER_SESSION_PREFIX = "arkham:catalog-customer-session:v1:"
 
@@ -159,7 +160,7 @@ async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal
 function CatalogoPublico() {
   const token = new URLSearchParams(window.location.search).get("token") || ""
   const supabase = useMemo(() => createClient(), [])
-  const [business, setBusiness] = useState("Catálogo de productos")
+  const [business, setBusiness] = useState("Catalogo 049")
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<Line[]>([])
   const [name, setName] = useState("")
@@ -188,6 +189,13 @@ function CatalogoPublico() {
   const [hasMore, setHasMore] = useState(false)
   const lastLoadedQueryRef = useRef("")
   const activeQueryRef = useRef("")
+
+  useEffect(() => {
+    if (!done) return
+
+    const timeout = window.setTimeout(() => setDone(false), ORDER_CONFIRMATION_DURATION_MS)
+    return () => window.clearTimeout(timeout)
+  }, [done])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -232,7 +240,7 @@ function CatalogoPublico() {
         }, controller.signal)
         if (controller.signal.aborted) return
 
-        setBusiness(snapshot.business_name || "Catálogo de productos")
+        setBusiness(snapshot.business_name || "Catalogo 049")
         setSourceTable(snapshot.source_table)
         setFixedCategory(snapshot.category_filter || null)
         setCategories(snapshot.categories || [])
@@ -258,7 +266,7 @@ function CatalogoPublico() {
     const storageKey = `${CUSTOMER_SESSION_PREFIX}${token}`
     let sessionToken = ""
     try {
-      const storedSession = window.sessionStorage.getItem(storageKey)
+      const storedSession = window.localStorage.getItem(storageKey)
       const parsed: unknown = storedSession ? JSON.parse(storedSession) : null
       if (parsed && typeof parsed === "object" && "session_token" in parsed &&
         typeof parsed.session_token === "string") {
@@ -298,7 +306,7 @@ function CatalogoPublico() {
       .catch((error: unknown) => {
         if (cancelled) return
         try {
-          window.sessionStorage.removeItem(storageKey)
+          window.localStorage.removeItem(storageKey)
         } catch (storageError) {
           console.error("No se pudo borrar la sesión vencida del catálogo:", storageError)
         }
@@ -444,13 +452,13 @@ function CatalogoPublico() {
       setLoginPassword("")
       setLoginOpen(false)
       try {
-        window.sessionStorage.setItem(
+        window.localStorage.setItem(
           `${CUSTOMER_SESSION_PREFIX}${token}`,
           JSON.stringify({ session_token: session.sessionToken }),
         )
       } catch (error) {
         console.error("No se pudo guardar la sesión del catálogo:", error)
-        setAuthMessage("Sesión iniciada. Si recargas la página, tendrás que volver a iniciar sesión.")
+        setAuthMessage("Sesión iniciada, pero el navegador no pudo guardarla. Si cierras la pestaña, tendrás que volver a iniciar sesión.")
       }
     } catch (error) {
       setAuthMessage(errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente."))
@@ -472,7 +480,7 @@ function CatalogoPublico() {
       setAuthMessage(errorMessage(error, "No se pudo cerrar la sesión en el servidor."))
     } finally {
       try {
-        window.sessionStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
+        window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
       } catch (error) {
         console.error("No se pudo borrar la sesión del catálogo:", error)
       }
@@ -530,7 +538,7 @@ function CatalogoPublico() {
   }
 
   if (done) {
-    return <div className="state-screen"><div className="state-card"><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
+    return <div className="state-screen"><div className="state-card"><button type="button" className="state-card-close" onClick={() => setDone(false)} aria-label="Cerrar confirmación del pedido">×</button><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
   }
 
   return (
@@ -538,7 +546,7 @@ function CatalogoPublico() {
       <header className="site-header">
         <div className="header-inner">
           <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
-          <div className="brand-copy"><span>CATÁLOGO</span><strong>{business}</strong></div>
+          <div className="brand-copy"><span>CATALOGO 049</span><strong>{business}</strong></div>
           {canUseCustomerAccounts && (customerSession ? (
             <div className="account-actions">
               <span>Hola, {customerSession.customer.name}</span>
