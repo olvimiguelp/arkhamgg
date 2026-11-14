@@ -23,6 +23,10 @@ type RequestBody = {
   token?: string
   session_token?: string
   customer_id?: string
+  customer_phone?: string
+  customer_phones?: string[]
+  customer_name?: string
+  offset?: number
   items?: unknown
 }
 
@@ -215,24 +219,119 @@ async function handleRequest(
 
   if (body.action === "overview") {
     const actor = await requireStaff(supabase, body, "overview")
-    const [customersResult, historyResult] = await Promise.all([
-      supabase
-        .from("catalog_customer_accounts")
-        .select("id, name, phone, is_active, created_at")
-        .eq("owner_admin_id", actor.ownerAdminId)
-        .order("created_at", { ascending: false })
-        .limit(500),
-      supabase
-        .from("catalog_order_history")
-        .select("id, catalog_customer_id, invoice_number, customer_name, customer_phone, items, total, created_at")
-        .eq("owner_admin_id", actor.ownerAdminId)
-        .order("created_at", { ascending: false })
-        .limit(100),
-    ])
+    const customersResult = await supabase
+      .from("catalog_customer_accounts")
+      .select("id, name, phone, is_active, created_at")
+      .eq("owner_admin_id", actor.ownerAdminId)
+      .order("created_at", { ascending: false })
+      .limit(500)
 
     if (customersResult.error) throw new RequestError("No se pudieron cargar las cuentas del catálogo", 500)
-    if (historyResult.error) throw new RequestError("No se pudo cargar el historial del catálogo", 500)
-    return { customers: customersResult.data, orders: historyResult.data }
+
+    const buyers = new Map<string, {
+      catalog_customer_id: string | null
+      customer_name: string
+      customer_phone: string
+      customer_phones: string[]
+      order_count: number
+      last_order_at: string
+    }>()
+    const pageSize = 1000
+    const maximumRows = 50_000
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("catalog_order_history")
+        .select("catalog_customer_id, customer_name, customer_phone, created_at")
+        .eq("owner_admin_id", actor.ownerAdminId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1)
+
+      if (error) throw new RequestError("No se pudo cargar el historial del catálogo", 500)
+      if (offset >= maximumRows && data.length > 0) {
+        throw new RequestError("El historial supera el máximo que se puede cargar en una sola consulta", 413)
+      }
+
+      for (const order of data) {
+        const normalizedPhone = String(order.customer_phone ?? "").replace(/\D/g, "")
+        const customerPhone = String(order.customer_phone ?? "").trim()
+        const customerName = String(order.customer_name ?? "").trim()
+        const key = normalizedPhone || (order.catalog_customer_id
+          ? `account:${order.catalog_customer_id}`
+          : `name:${customerName.toLowerCase()}`)
+        const buyer = buyers.get(key)
+
+        if (buyer) {
+          buyer.order_count += 1
+          if (customerPhone && !buyer.customer_phones.includes(customerPhone)) {
+            buyer.customer_phones.push(customerPhone)
+          }
+          if (!buyer.catalog_customer_id && order.catalog_customer_id) {
+            buyer.catalog_customer_id = order.catalog_customer_id
+          }
+        } else {
+          buyers.set(key, {
+            catalog_customer_id: order.catalog_customer_id,
+            customer_name: customerName,
+            customer_phone: customerPhone,
+            customer_phones: customerPhone ? [customerPhone] : [],
+            order_count: 1,
+            last_order_at: order.created_at,
+          })
+        }
+      }
+
+      if (data.length < pageSize) break
+      offset += data.length
+    }
+
+    return { customers: customersResult.data, buyers: Array.from(buyers.values()) }
+  }
+
+  if (body.action === "history") {
+    const actor = await requireStaff(supabase, body, "overview")
+    const phone = typeof body.customer_phone === "string" ? body.customer_phone.trim() : ""
+    const phoneVariants = Array.isArray(body.customer_phones)
+      ? Array.from(new Set(body.customer_phones
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean)))
+      : []
+    const customerName = typeof body.customer_name === "string" ? body.customer_name.trim() : ""
+    if (phoneVariants.length > 100) {
+      throw new RequestError("Hay demasiados formatos de teléfono asociados a este cliente", 400)
+    }
+    if (!phone && phoneVariants.length === 0 && !customerName) {
+      throw new RequestError("Se necesita el teléfono o el nombre del cliente", 400)
+    }
+    const offset = body.offset ?? 0
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new RequestError("La página del historial no es válida", 400)
+    }
+
+    const pageSize = 100
+    let historyQuery = supabase
+      .from("catalog_order_history")
+      .select("id, catalog_customer_id, invoice_number, customer_name, customer_phone, items, total, created_at")
+      .eq("owner_admin_id", actor.ownerAdminId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize)
+    if (phoneVariants.length) {
+      historyQuery = historyQuery.in("customer_phone", phoneVariants)
+    } else {
+      historyQuery = phone
+        ? historyQuery.eq("customer_phone", phone)
+        : historyQuery.eq("customer_name", customerName)
+    }
+    const { data, error } = await historyQuery
+
+    if (error) throw new RequestError("No se pudo cargar el historial del cliente", 500)
+    const hasMore = data.length > pageSize
+    const orders = hasMore ? data.slice(0, pageSize) : data
+    return { orders, has_more: hasMore, next_offset: offset + orders.length }
   }
 
   if (body.action === "login") {

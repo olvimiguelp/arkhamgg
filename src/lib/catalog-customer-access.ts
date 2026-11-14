@@ -25,6 +25,15 @@ export type CatalogOrderHistory = {
   created_at: string
 }
 
+export type CatalogOrderCustomer = {
+  catalog_customer_id: string | null
+  customer_name: string
+  customer_phone: string
+  customer_phones: string[]
+  order_count: number
+  last_order_at: string
+}
+
 type StaffCredentials = {
   actor_id: string
   actor_password: string
@@ -41,14 +50,28 @@ type OverviewRequest = StaffCredentials & {
   action: "overview"
 }
 
+type CustomerHistoryRequest = StaffCredentials & {
+  action: "history"
+  customer_phone?: string
+  customer_phones?: string[]
+  customer_name?: string
+  offset?: number
+}
+
 type CreateAccountResponse = { customer: CatalogCustomerAccount }
-type OverviewResponse = { customers: CatalogCustomerAccount[]; orders: CatalogOrderHistory[] }
+type OverviewResponse = { customers: CatalogCustomerAccount[]; buyers: CatalogOrderCustomer[] }
+type CustomerHistoryResponse = {
+  orders: CatalogOrderHistory[]
+  has_more: boolean
+  next_offset: number
+}
 
 export function invokeCatalogCustomerAccess(request: CreateAccountRequest): Promise<CreateAccountResponse>
 export function invokeCatalogCustomerAccess(request: OverviewRequest): Promise<OverviewResponse>
+export function invokeCatalogCustomerAccess(request: CustomerHistoryRequest): Promise<CustomerHistoryResponse>
 export async function invokeCatalogCustomerAccess(
-  request: CreateAccountRequest | OverviewRequest,
-): Promise<CreateAccountResponse | OverviewResponse> {
+  request: CreateAccountRequest | OverviewRequest | CustomerHistoryRequest,
+): Promise<CreateAccountResponse | OverviewResponse | CustomerHistoryResponse> {
   const { data, error } = await createClient().functions.invoke("catalog-customer-access", {
     body: request,
   })
@@ -72,5 +95,5 @@ export async function invokeCatalogCustomerAccess(
     throw new Error("La función de clientes del catálogo devolvió una respuesta inválida")
   }
 
-  return data as CreateAccountResponse | OverviewResponse
+  return data as CreateAccountResponse | OverviewResponse | CustomerHistoryResponse
 }

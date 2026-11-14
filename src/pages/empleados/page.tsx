@@ -52,6 +52,7 @@ import {
   Share2,
   Copy,
   Loader2,
+  ArrowLeft,
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
 import { getPublicCatalogUrl, savePublicCatalogUrl } from "@/lib/public-catalog-url"
@@ -59,6 +60,7 @@ import { getOrCreatePublicCatalogShare, type PublicCatalogSource } from "@/lib/p
 import {
   invokeCatalogCustomerAccess,
   type CatalogCustomerAccount,
+  type CatalogOrderCustomer,
   type CatalogOrderHistory,
 } from "@/lib/catalog-customer-access"
 import { ALMACEN_CATEGORY_OPTIONS, getAlmacenCategoryFilterValue, getAlmacenCategoryLabel, isAlmacenCategory } from "@/lib/almacen"
@@ -118,6 +120,20 @@ const isProbablyUrl = (value: string) =>
 
 const buildWhatsappUrl = (phone: string, message: string) =>
   `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+
+type CatalogCustomerDirectoryEntry = {
+  key: string
+  accountId: string | null
+  name: string
+  phone: string
+  phoneVariants: string[]
+  isActive: boolean | null
+  createdAt: string | null
+  orderCount: number
+  lastOrderAt: string | null
+}
+
+const normalizeCatalogCustomerPhone = (phone: string) => phone.replace(/\D/g, "")
 
 const resolveSupportLink = (raw: any, message: string) => {
   if (!raw) return ""
@@ -212,12 +228,16 @@ export default function EmpleadosPage() {
   const [isAlmacenCatalogDialogOpen, setIsAlmacenCatalogDialogOpen] = useState(false)
   const [selectedAlmacenCategories, setSelectedAlmacenCategories] = useState<string[]>([])
   const [isCatalogCustomerDialogOpen, setIsCatalogCustomerDialogOpen] = useState(false)
-  const [catalogCustomerView, setCatalogCustomerView] = useState<"accounts" | "history">("accounts")
+  const [catalogCustomerView, setCatalogCustomerView] = useState<"customers" | "history">("customers")
+  const [selectedCatalogCustomerKey, setSelectedCatalogCustomerKey] = useState<string | null>(null)
   const [catalogCustomerName, setCatalogCustomerName] = useState("")
   const [catalogCustomerPhone, setCatalogCustomerPhone] = useState("")
   const [catalogCustomerPassword, setCatalogCustomerPassword] = useState("")
   const [catalogCustomers, setCatalogCustomers] = useState<CatalogCustomerAccount[]>([])
+  const [catalogBuyers, setCatalogBuyers] = useState<CatalogOrderCustomer[]>([])
   const [catalogOrderHistory, setCatalogOrderHistory] = useState<CatalogOrderHistory[]>([])
+  const [catalogHistoryHasMore, setCatalogHistoryHasMore] = useState(false)
+  const [catalogHistoryNextOffset, setCatalogHistoryNextOffset] = useState(0)
   const [isLoadingCatalogCustomers, setIsLoadingCatalogCustomers] = useState(false)
   const [isCreatingCatalogCustomer, setIsCreatingCatalogCustomer] = useState(false)
   const [createdCatalogCredentials, setCreatedCatalogCredentials] = useState<{ phone: string; password: string } | null>(null)
@@ -231,6 +251,54 @@ export default function EmpleadosPage() {
       })
     return Array.from(options, ([value, label]) => ({ value, label }))
   }, [products])
+  const catalogCustomerDirectory = useMemo(() => {
+    const entries = new Map<string, CatalogCustomerDirectoryEntry>()
+    const accountKeys = new Map<string, string>()
+    const accountsByKey = new Map<string, CatalogCustomerAccount>()
+    const phoneKeys = new Map<string, string>()
+
+    catalogCustomers.forEach((customer) => {
+      const key = `account:${customer.id}`
+      accountKeys.set(customer.id, key)
+      accountsByKey.set(key, customer)
+      const phone = normalizeCatalogCustomerPhone(customer.phone)
+      if (phone) phoneKeys.set(phone, key)
+    })
+
+    catalogBuyers.forEach((buyer) => {
+      const phone = normalizeCatalogCustomerPhone(buyer.customer_phone)
+      const key =
+        (buyer.catalog_customer_id && accountKeys.get(buyer.catalog_customer_id)) ||
+        (phone && phoneKeys.get(phone)) ||
+        `guest:${phone || buyer.customer_name.trim().toLowerCase()}`
+      const account = accountsByKey.get(key)
+      entries.set(key, {
+        key,
+        accountId: account?.id ?? buyer.catalog_customer_id,
+        name: account?.name ?? buyer.customer_name,
+        phone: account?.phone ?? buyer.customer_phone,
+        phoneVariants: Array.from(new Set([account?.phone ?? "", ...buyer.customer_phones].filter(Boolean))),
+        isActive: account?.is_active ?? null,
+        createdAt: account?.created_at ?? null,
+        orderCount: buyer.order_count,
+        lastOrderAt: buyer.last_order_at,
+      })
+    })
+
+    return Array.from(entries.values()).sort((left, right) => {
+      const leftDate = left.lastOrderAt || left.createdAt || ""
+      const rightDate = right.lastOrderAt || right.createdAt || ""
+      return rightDate.localeCompare(leftDate) || left.name.localeCompare(right.name, "es")
+    })
+  }, [catalogCustomers, catalogBuyers])
+  const selectedCatalogCustomer = useMemo(
+    () => catalogCustomerDirectory.find((customer) => customer.key === selectedCatalogCustomerKey) ?? null,
+    [catalogCustomerDirectory, selectedCatalogCustomerKey],
+  )
+  const selectedCatalogCustomerOrders = useMemo(() => {
+    if (!selectedCatalogCustomer) return []
+    return catalogOrderHistory
+  }, [catalogOrderHistory, selectedCatalogCustomer])
 
   const { config: systemConfig, loading: systemConfigLoading } = useSystemConfig({
     keys: ["whatsapp_support_link", "whatsapp_support_access", "public_catalog_url"],
@@ -273,7 +341,7 @@ export default function EmpleadosPage() {
         ...getCatalogStaffCredentials(),
       })
       setCatalogCustomers(response.customers)
-      setCatalogOrderHistory(response.orders)
+      setCatalogBuyers(response.buyers)
     } catch (error) {
       console.error("Error al cargar clientes del catálogo:", error)
       toast({
@@ -286,8 +354,42 @@ export default function EmpleadosPage() {
     }
   }
 
+  const loadCatalogCustomerHistory = async (
+    customer: CatalogCustomerDirectoryEntry,
+    offset = 0,
+    append = false,
+  ) => {
+    setIsLoadingCatalogCustomers(true)
+    try {
+      const response = await invokeCatalogCustomerAccess({
+        action: "history",
+        ...getCatalogStaffCredentials(),
+        customer_phone: customer.phone || undefined,
+        customer_phones: customer.phoneVariants,
+        customer_name: customer.phone ? undefined : customer.name,
+        offset,
+      })
+      setSelectedCatalogCustomerKey(customer.key)
+      setCatalogCustomerView("history")
+      setCatalogOrderHistory((current) => append ? [...current, ...response.orders] : response.orders)
+      setCatalogHistoryHasMore(response.has_more)
+      setCatalogHistoryNextOffset(response.next_offset)
+    } catch (error) {
+      console.error("Error al cargar historial del cliente del catálogo:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo cargar el historial del cliente.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingCatalogCustomers(false)
+    }
+  }
+
   const openCatalogCustomerDialog = () => {
-    setCatalogCustomerView("accounts")
+    setCatalogCustomerView("customers")
+    setSelectedCatalogCustomerKey(null)
+    setCatalogOrderHistory([])
     setIsCatalogCustomerDialogOpen(true)
     void loadCatalogCustomerOverview()
   }
@@ -1275,6 +1377,8 @@ export default function EmpleadosPage() {
           if (!open) {
             setCreatedCatalogCredentials(null)
             setCatalogCustomerPassword("")
+            setSelectedCatalogCustomerKey(null)
+            setCatalogCustomerView("customers")
           }
         }}
       >
@@ -1282,28 +1386,11 @@ export default function EmpleadosPage() {
           <DialogHeader>
             <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
             <DialogDescription>
-              Estas cuentas solo pueden iniciar sesión en el catálogo externo; no crean empleados ni dan acceso al sistema interno.
+              Selecciona un cliente que haya pedido por el catálogo para consultar su historial. Las compras de invitados se agrupan por teléfono.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex gap-2 border-b pb-3">
-            <Button
-              type="button"
-              variant={catalogCustomerView === "accounts" ? "default" : "outline"}
-              onClick={() => setCatalogCustomerView("accounts")}
-            >
-              Cuentas
-            </Button>
-            <Button
-              type="button"
-              variant={catalogCustomerView === "history" ? "default" : "outline"}
-              onClick={() => setCatalogCustomerView("history")}
-            >
-              Historial de pedidos
-            </Button>
-          </div>
-
-          {catalogCustomerView === "accounts" ? (
+          {catalogCustomerView === "customers" ? (
             <div className="space-y-4">
               {createdCatalogCredentials && (
                 <div className="flex flex-col gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
@@ -1381,35 +1468,53 @@ export default function EmpleadosPage() {
               </div>
 
               <div className="flex items-center justify-between">
-                <h3 className="font-semibold">Cuentas registradas ({catalogCustomers.length})</h3>
+                <h3 className="font-semibold">Clientes del catálogo ({catalogCustomerDirectory.length})</h3>
                 <Button type="button" variant="outline" onClick={() => void loadCatalogCustomerOverview()} disabled={isLoadingCatalogCustomers}>
                   {isLoadingCatalogCustomers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Actualizar
+                  Actualizar clientes
                 </Button>
               </div>
               {isLoadingCatalogCustomers ? (
-                <p className="py-4 text-center text-sm text-muted-foreground">Cargando cuentas…</p>
-              ) : catalogCustomers.length ? (
-                <div className="max-h-64 overflow-auto rounded-md border">
+                <p className="py-4 text-center text-sm text-muted-foreground">Cargando clientes y pedidos del catálogo…</p>
+              ) : catalogCustomerDirectory.length ? (
+                <div className="max-h-[55vh] overflow-auto rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Cliente</TableHead>
                         <TableHead>Teléfono</TableHead>
-                        <TableHead>Creada</TableHead>
-                        <TableHead>Estado</TableHead>
+                        <TableHead>Pedidos</TableHead>
+                        <TableHead>Último pedido</TableHead>
+                        <TableHead>Tipo</TableHead>
+                        <TableHead className="text-right">Historial</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {catalogCustomers.map((customer) => (
-                        <TableRow key={customer.id}>
-                          <TableCell>{customer.name}</TableCell>
+                      {catalogCustomerDirectory.map((customer) => (
+                        <TableRow key={customer.key}>
+                          <TableCell className="font-medium">{customer.name}</TableCell>
                           <TableCell>{customer.phone}</TableCell>
-                          <TableCell>{new Date(customer.created_at).toLocaleDateString("es-DO")}</TableCell>
+                          <TableCell>{customer.orderCount}</TableCell>
                           <TableCell>
-                            <Badge variant={customer.is_active ? "default" : "secondary"}>
-                              {customer.is_active ? "Activa" : "Inactiva"}
+                            {customer.lastOrderAt ? new Date(customer.lastOrderAt).toLocaleDateString("es-DO") : "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={customer.accountId ? (customer.isActive === false ? "secondary" : "default") : "outline"}>
+                              {customer.accountId
+                                ? customer.isActive === false ? "Cuenta inactiva" : "Cuenta de catálogo"
+                                : "Invitado"}
                             </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!customer.orderCount || isLoadingCatalogCustomers}
+                              onClick={() => void loadCatalogCustomerHistory(customer)}
+                            >
+                              Ver historial
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1417,23 +1522,45 @@ export default function EmpleadosPage() {
                   </Table>
                 </div>
               ) : (
-                <p className="py-4 text-center text-sm text-muted-foreground">Todavía no hay cuentas de catálogo.</p>
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  Todavía no hay clientes que hayan pedido por el catálogo.
+                </p>
               )}
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">Pedidos recientes de almacén, incluyendo compras como invitado. Se muestran hasta 100 pedidos.</p>
-                <Button type="button" variant="outline" onClick={() => void loadCatalogCustomerOverview()} disabled={isLoadingCatalogCustomers}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCatalogCustomerView("customers")}
+                  >
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Volver a clientes
+                  </Button>
+                  <div>
+                    <h3 className="font-semibold">{selectedCatalogCustomer?.name ?? "Cliente"}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedCatalogCustomer?.phone || "Sin teléfono"} · {selectedCatalogCustomerOrders.length} de {selectedCatalogCustomer?.orderCount ?? 0} pedidos
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => selectedCatalogCustomer && void loadCatalogCustomerHistory(selectedCatalogCustomer)}
+                  disabled={isLoadingCatalogCustomers || !selectedCatalogCustomer}
+                >
                   {isLoadingCatalogCustomers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Actualizar historial
                 </Button>
               </div>
               {isLoadingCatalogCustomers ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">Cargando historial…</p>
-              ) : catalogOrderHistory.length ? (
+              ) : selectedCatalogCustomerOrders.length ? (
                 <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
-                  {catalogOrderHistory.map((order) => (
+                  {selectedCatalogCustomerOrders.map((order) => (
                     <div key={order.id} className="space-y-2 rounded-md border p-3">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -1455,7 +1582,19 @@ export default function EmpleadosPage() {
                   ))}
                 </div>
               ) : (
-                <p className="py-4 text-center text-sm text-muted-foreground">Todavía no hay pedidos de almacén desde el catálogo.</p>
+                <p className="py-4 text-center text-sm text-muted-foreground">
+                  No se encontraron pedidos para este cliente.
+                </p>
+              )}
+              {catalogHistoryHasMore && !isLoadingCatalogCustomers && selectedCatalogCustomer && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => void loadCatalogCustomerHistory(selectedCatalogCustomer, catalogHistoryNextOffset, true)}
+                >
+                  Cargar más pedidos
+                </Button>
               )}
             </div>
           )}
