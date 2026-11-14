@@ -8,6 +8,7 @@ import {
   Edit,
   FileDown,
   FileText,
+  ImageDown,
   Loader2,
   Minus,
   PackagePlus,
@@ -53,7 +54,14 @@ import {
   normalizeAlmacenBoxNumber,
 } from "@/lib/almacen"
 import { sameSaleItemSource } from "@/lib/transaction-classification"
-import { uploadProductImageToStorage } from "@/lib/product-image-storage"
+import {
+  deleteProductImageFromStorage,
+  isProductImagePairOptimized,
+  optimizeProductImageFromUrl,
+  uploadProductImageToStorage,
+} from "@/lib/product-image-storage"
+
+const ALMACEN_IMAGE_OPTIMIZATION_BATCH_SIZE = 20
 
 type FormState = {
   boxNumber: string
@@ -159,6 +167,11 @@ export default function AlmacenPage() {
   const [formData, setFormData] = useState<FormState>(INITIAL_FORM)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [isOptimizingImages, setIsOptimizingImages] = useState(false)
+  const [imageOptimizationProgress, setImageOptimizationProgress] = useState<{
+    total: number
+    processed: number
+  } | null>(null)
   const deferredSearchTerm = useDeferredValue(searchTerm)
 
   const employeePermissions = employees.find((employee) => employee.email === currentUser?.email)?.permissions
@@ -268,6 +281,9 @@ export default function AlmacenPage() {
   const totalUnits = almacenProducts.reduce((acc, product) => acc + product.stock, 0)
   const lowStockCount = almacenProducts.filter((product) => product.stock <= (product.minStock || 0)).length
   const totalValue = almacenProducts.reduce((acc, product) => acc + product.sellPrice * product.stock, 0)
+  const imagesToOptimize = almacenProducts.filter(
+    (product) => Boolean(product.imageUrl) && !isProductImagePairOptimized(product.imageUrl, product.imageThumbnailUrl),
+  )
   const editingProduct = useMemo(
     () => (editingId ? almacenProducts.find((product) => product.id === editingId) || null : null),
     [almacenProducts, editingId],
@@ -778,6 +794,52 @@ export default function AlmacenPage() {
     }
   }
 
+  const handleOptimizeStoredImages = async () => {
+    if (!canEditProducts || isOptimizingImages) return
+
+    const batch = imagesToOptimize.slice(0, ALMACEN_IMAGE_OPTIMIZATION_BATCH_SIZE)
+    if (!batch.length) return
+
+    setIsOptimizingImages(true)
+    setImageOptimizationProgress({ total: batch.length, processed: 0 })
+    let completed = 0
+    let failed = 0
+
+    for (let index = 0; index < batch.length; index += 1) {
+      const product = batch[index]
+      let uploadedStoragePaths: string[] = []
+      try {
+        const sourceId = String(product.sourceId || product.id).replace(/^armacen::/, "")
+        const result = await optimizeProductImageFromUrl(sourceId, product.imageUrl || "", product.imageThumbnailUrl)
+        if (!result.success || !result.publicUrl || !result.thumbnailUrl) {
+          throw new Error(result.error || "No se pudo optimizar la imagen")
+        }
+        uploadedStoragePaths = [result.storagePath, result.thumbnailStoragePath].filter(
+          (path): path is string => Boolean(path),
+        )
+        await updateProduct(product.id, {
+          imageUrl: result.publicUrl,
+          imageThumbnailUrl: result.thumbnailUrl,
+        })
+        completed += 1
+      } catch (error) {
+        await Promise.all(uploadedStoragePaths.map((path) => deleteProductImageFromStorage(path)))
+        failed += 1
+        console.error("No se pudo optimizar la imagen del producto de almacén:", product.id, error)
+      } finally {
+        setImageOptimizationProgress({ total: batch.length, processed: index + 1 })
+      }
+    }
+
+    setIsOptimizingImages(false)
+    setImageOptimizationProgress(null)
+    toast({
+      title: failed ? "Optimización incompleta" : "Imágenes optimizadas",
+      description: `${completed} optimizadas; ${failed} con error.${imagesToOptimize.length > batch.length ? " Pulsa nuevamente para continuar con las restantes." : ""}`,
+      ...(failed ? { variant: "destructive" as const } : {}),
+    })
+  }
+
   const { ref: scrollRef } = useDraggableScroll<HTMLDivElement>({
     childSelector: '[data-slot="table-container"]',
   })
@@ -1046,6 +1108,27 @@ export default function AlmacenPage() {
               </>
             )}
           </Button>
+
+          {canEditProducts && imagesToOptimize.length > 0 && (
+            <Button
+              variant="outline"
+              className="w-full min-h-11 sm:w-auto"
+              onClick={() => void handleOptimizeStoredImages()}
+              disabled={isOptimizingImages}
+            >
+              {isOptimizingImages ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Optimizando {imageOptimizationProgress?.processed || 0}/{imageOptimizationProgress?.total || 0}
+                </>
+              ) : (
+                <>
+                  <ImageDown className="mr-2 h-4 w-4" />
+                  Optimizar {Math.min(ALMACEN_IMAGE_OPTIMIZATION_BATCH_SIZE, imagesToOptimize.length)} imágenes
+                </>
+              )}
+            </Button>
+          )}
 
           <Select value={filterCategory} onValueChange={setFilterCategory}>
             <SelectTrigger className="w-full min-w-0 sm:w-[280px]">

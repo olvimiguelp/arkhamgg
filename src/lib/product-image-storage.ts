@@ -17,6 +17,20 @@ type ProductImageStoragePaths = {
   thumbnail: string
 }
 
+type OptimizedProductImages = {
+  full: Blob
+  thumbnail: Blob
+}
+
+type UploadedProductImages = {
+  success: boolean
+  publicUrl?: string
+  thumbnailUrl?: string
+  storagePath?: string
+  thumbnailStoragePath?: string
+  error?: string
+}
+
 function getProductImageStoragePaths(productId: string): ProductImageStoragePaths {
   // Cada versión se guarda en una ruta nueva. Así podemos usar caché larga sin
   // mostrar una foto anterior después de cambiarla.
@@ -56,6 +70,24 @@ export function isProductImageStorageUrl(imageUrl: string | null | undefined): b
     const image = new URL(imageUrl)
     const publicPath = `/storage/v1/object/public/${PRODUCT_IMAGES_BUCKET}/`
     return image.origin === projectUrl.origin && image.pathname.startsWith(publicPath)
+  } catch {
+    return false
+  }
+}
+
+export function isProductImagePairOptimized(
+  imageUrl: string | null | undefined,
+  thumbnailUrl: string | null | undefined,
+): boolean {
+  if (!imageUrl || !thumbnailUrl || !isProductImageStorageUrl(imageUrl) || !isProductImageStorageUrl(thumbnailUrl)) {
+    return false
+  }
+
+  try {
+    const fullPath = new URL(imageUrl).pathname
+    const thumbnailPath = new URL(thumbnailUrl).pathname
+    return /-full\.webp$/i.test(fullPath) &&
+      fullPath.replace(/-full\.webp$/i, "-thumb.webp") === thumbnailPath
   } catch {
     return false
   }
@@ -102,13 +134,98 @@ function createWebpVariant(image: HTMLImageElement, maxEdge: number, quality: nu
   })
 }
 
-async function createOptimizedProductImages(file: File): Promise<{ full: Blob; thumbnail: Blob }> {
+async function createOptimizedProductImages(file: Blob): Promise<OptimizedProductImages> {
   const image = await loadImage(file)
   const [full, thumbnail] = await Promise.all([
     createWebpVariant(image, FULL_IMAGE_MAX_EDGE, FULL_IMAGE_QUALITY),
     createWebpVariant(image, THUMBNAIL_MAX_EDGE, THUMBNAIL_QUALITY),
   ])
   return { full, thumbnail }
+}
+
+async function uploadOptimizedProductImages(
+  productId: string,
+  images: OptimizedProductImages,
+): Promise<UploadedProductImages> {
+  const supabase = createClient()
+  const paths = getProductImageStoragePaths(productId)
+  const { error: fullError } = await supabase.storage.from(PRODUCT_IMAGES_BUCKET).upload(paths.full, images.full, {
+    contentType: "image/webp",
+    cacheControl: VERSIONED_CACHE_SECONDS,
+    upsert: false,
+  })
+
+  if (fullError) {
+    return { success: false, error: formatStorageError(PRODUCT_IMAGES_BUCKET, fullError, "No se pudo subir la imagen") }
+  }
+
+  const { error: thumbnailError } = await supabase.storage.from(PRODUCT_IMAGES_BUCKET).upload(paths.thumbnail, images.thumbnail, {
+    contentType: "image/webp",
+    cacheControl: VERSIONED_CACHE_SECONDS,
+    upsert: false,
+  })
+
+  if (thumbnailError) {
+    await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove([paths.full])
+    return { success: false, error: formatStorageError(PRODUCT_IMAGES_BUCKET, thumbnailError, "No se pudo crear la miniatura") }
+  }
+
+  return {
+    success: true,
+    publicUrl: getProductImagePublicUrl(paths.full),
+    thumbnailUrl: getProductImagePublicUrl(paths.thumbnail),
+    storagePath: paths.full,
+    thumbnailStoragePath: paths.thumbnail,
+  }
+}
+
+export async function optimizeProductImageFromUrl(
+  productId: string,
+  imageUrl: string,
+  thumbnailUrl?: string | null,
+): Promise<UploadedProductImages> {
+  if (!productId) return { success: false, error: "Product id required" }
+  if (!imageUrl) return { success: false, error: "La imagen original no tiene una URL válida" }
+  if (isProductImagePairOptimized(imageUrl, thumbnailUrl)) {
+    return { success: true, publicUrl: imageUrl, thumbnailUrl: thumbnailUrl || undefined }
+  }
+
+  try {
+    const response = await fetch(imageUrl, { cache: "force-cache" })
+    if (!response.ok) {
+      return { success: false, error: `No se pudo descargar la imagen original (${response.status})` }
+    }
+
+    const contentLength = Number(response.headers.get("content-length") || 0)
+    if (Number.isFinite(contentLength) && contentLength > MAX_LEGACY_SOURCE_BYTES) {
+      return { success: false, error: "La imagen original es demasiado grande para optimizarla en el navegador" }
+    }
+
+    const original = await response.blob()
+    if (original.size > MAX_LEGACY_SOURCE_BYTES) {
+      return { success: false, error: "La imagen original es demasiado grande para optimizarla en el navegador" }
+    }
+    if (!original.type.startsWith("image/")) {
+      return { success: false, error: "El archivo original no es una imagen válida" }
+    }
+
+    const image = await loadImage(original)
+    if ((image.naturalWidth || image.width) * (image.naturalHeight || image.height) > MAX_LEGACY_SOURCE_PIXELS) {
+      return { success: false, error: "La imagen tiene demasiados píxeles para optimizarla en el navegador" }
+    }
+
+    const [full, thumbnail] = await Promise.all([
+      createWebpVariant(image, FULL_IMAGE_MAX_EDGE, FULL_IMAGE_QUALITY),
+      createWebpVariant(image, THUMBNAIL_MAX_EDGE, THUMBNAIL_QUALITY),
+    ])
+    return await uploadOptimizedProductImages(productId, { full, thumbnail })
+  } catch (error) {
+    console.error("optimizeProductImageFromUrl:", error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "No se pudo optimizar la imagen",
+    }
+  }
 }
 
 /**
@@ -185,38 +302,8 @@ export async function uploadProductImageToStorage(
   if (file.size > MAX_IMAGE_BYTES) return { success: false, error: "La imagen no puede superar 4 MB" }
 
   try {
-    const supabase = createClient()
-    const paths = getProductImageStoragePaths(productId)
     const optimizedImages = await createOptimizedProductImages(file)
-
-    const { error: fullError } = await supabase.storage.from(PRODUCT_IMAGES_BUCKET).upload(paths.full, optimizedImages.full, {
-      contentType: "image/webp",
-      cacheControl: VERSIONED_CACHE_SECONDS,
-      upsert: false,
-    })
-
-    if (fullError) {
-      return { success: false, error: formatStorageError(PRODUCT_IMAGES_BUCKET, fullError, "No se pudo subir la imagen") }
-    }
-
-    const { error: thumbnailError } = await supabase.storage.from(PRODUCT_IMAGES_BUCKET).upload(paths.thumbnail, optimizedImages.thumbnail, {
-      contentType: "image/webp",
-      cacheControl: VERSIONED_CACHE_SECONDS,
-      upsert: false,
-    })
-
-    if (thumbnailError) {
-      // No dejamos un objeto huérfano si no se pudo completar el par de imágenes.
-      await supabase.storage.from(PRODUCT_IMAGES_BUCKET).remove([paths.full])
-      return { success: false, error: formatStorageError(PRODUCT_IMAGES_BUCKET, thumbnailError, "No se pudo crear la miniatura") }
-    }
-
-    return {
-      success: true,
-      publicUrl: getProductImagePublicUrl(paths.full),
-      thumbnailUrl: getProductImagePublicUrl(paths.thumbnail),
-      storagePath: paths.full,
-    }
+    return await uploadOptimizedProductImages(productId, optimizedImages)
   } catch (err) {
     console.error("uploadProductImageToStorage:", err)
     return { success: false, error: "Error inesperado al subir la imagen" }
