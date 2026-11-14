@@ -1,6 +1,6 @@
 "use client"
 
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type FormEvent, useCallback, useMemo, useState } from "react"
 import {
   CheckCircle2,
   ClipboardList,
@@ -67,12 +67,6 @@ const INITIAL_NEW_ALMACEN_CUSTOMER_FORM: NewAlmacenCustomerForm = {
   creditLimit: "0",
 }
 
-type CatalogOrderAlert = {
-  invoiceNumber: string
-  customerName: string
-  total: number
-}
-
 export default function ColaExclusivaPage() {
   const { sales, updateSale, updateRepair, updateCustomer, deleteSale, repairs, customers, employees, currentUser, addCustomer, products } = useStore()
   const { toast } = useToast()
@@ -131,9 +125,6 @@ export default function ColaExclusivaPage() {
   const [isProcessingCreditSale, setIsProcessingCreditSale] = useState(false)
   const [isProcessingPartialCredit, setIsProcessingPartialCredit] = useState(false)
   const [deletingSaleId, setDeletingSaleId] = useState<string | null>(null)
-  const [catalogOrderAlert, setCatalogOrderAlert] = useState<CatalogOrderAlert | null>(null)
-  const [hasNewCatalogOrder, setHasNewCatalogOrder] = useState(false)
-  const notifiedCatalogOrderIds = useRef(new Set<string>())
 
   const employee = employees.find((e) => e.email === currentUser?.email)
   const currentOwnerAdminId = useMemo(() => {
@@ -147,78 +138,6 @@ export default function ColaExclusivaPage() {
     ? { name: employee.name, phone: employee.phone }
     : { name: currentUser?.name ?? "", phone: "" }
   const finalizerEmployeeId = currentUser?.id || undefined
-
-  useEffect(() => {
-    if (!currentOwnerAdminId) return
-
-    const channel = supabase
-      .channel(`catalog-order-alerts-${currentOwnerAdminId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "sales",
-          filter: `owner_admin_id=eq.${currentOwnerAdminId}`,
-        },
-        (payload) => {
-          const order = payload.new as {
-            id?: unknown
-            owner_admin_id?: unknown
-            invoice_number?: unknown
-            customer_name?: unknown
-            total?: unknown
-            status?: unknown
-            items?: unknown
-          }
-          const orderId = String(order.id ?? "")
-          const items = Array.isArray(order.items) ? order.items : []
-          const isWarehouseCatalogOrder =
-            String(order.owner_admin_id ?? "") === currentOwnerAdminId &&
-            String(order.invoice_number ?? "").startsWith("WEB-") &&
-            order.status === "pending" &&
-            items.some((item) => isAlmacenSourceRecord(item as Record<string, unknown>))
-
-          if (!orderId || !isWarehouseCatalogOrder || notifiedCatalogOrderIds.current.has(orderId)) return
-
-          notifiedCatalogOrderIds.current.add(orderId)
-          setHasNewCatalogOrder(true)
-          setCatalogOrderAlert({
-            invoiceNumber: String(order.invoice_number),
-            customerName: String(order.customer_name || "Cliente"),
-            total: Number(order.total) || 0,
-          })
-
-          try {
-            const audioContext = new window.AudioContext()
-            const oscillator = audioContext.createOscillator()
-            const gain = audioContext.createGain()
-            oscillator.type = "sine"
-            oscillator.frequency.value = 880
-            gain.gain.setValueAtTime(0.0001, audioContext.currentTime)
-            gain.gain.exponentialRampToValueAtTime(0.2, audioContext.currentTime + 0.02)
-            gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.35)
-            oscillator.connect(gain)
-            gain.connect(audioContext.destination)
-            oscillator.onended = () => void audioContext.close()
-            void audioContext.resume().then(() => {
-              oscillator.start()
-              oscillator.stop(audioContext.currentTime + 0.35)
-            }).catch((error: unknown) => {
-              console.warn("No se pudo reproducir el sonido del nuevo pedido:", error)
-              void audioContext.close()
-            })
-          } catch (error) {
-            console.warn("No se pudo iniciar el sonido del nuevo pedido:", error)
-          }
-        },
-      )
-      .subscribe()
-
-    return () => {
-      void supabase.removeChannel(channel)
-    }
-  }, [currentOwnerAdminId, supabase])
 
   const syncRepairStatusForSale = useCallback(async (sale: Sale, status: "listo" | "entregado") => {
     const relatedRepairs = repairs.filter((repair) =>
@@ -1134,45 +1053,6 @@ export default function ColaExclusivaPage() {
 
   return (
     <div className="space-y-4 p-3 pb-20 sm:space-y-6 sm:p-4 md:p-6">
-      <Dialog
-        open={Boolean(catalogOrderAlert)}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCatalogOrderAlert(null)
-            setHasNewCatalogOrder(false)
-          }
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <span className="h-3 w-3 animate-pulse rounded-full bg-red-600" />
-              ¡Nuevo pedido del catálogo!
-            </DialogTitle>
-            <DialogDescription>
-              Llegó un pedido de almacén y está esperando en la cola exclusiva.
-            </DialogDescription>
-          </DialogHeader>
-          {catalogOrderAlert && (
-            <div className="space-y-2 rounded-md border p-4 text-sm">
-              <p><span className="font-medium">Cliente:</span> {catalogOrderAlert.customerName}</p>
-              <p><span className="font-medium">Factura:</span> {catalogOrderAlert.invoiceNumber}</p>
-              <p><span className="font-medium">Total:</span> ${formatCurrency(catalogOrderAlert.total)}</p>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              onClick={() => {
-                setCatalogOrderAlert(null)
-                setHasNewCatalogOrder(false)
-              }}
-            >
-              Entendido
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
@@ -1217,9 +1097,6 @@ export default function ColaExclusivaPage() {
         <CardHeader className="space-y-2">
           <CardTitle className="flex items-center gap-2 text-xl md:text-2xl">
             Cola Exclusiva de pre-facturas
-            {hasNewCatalogOrder && (
-              <span className="h-3 w-3 animate-pulse rounded-full bg-red-600" role="status" aria-label="Nuevo pedido del catálogo" />
-            )}
           </CardTitle>
           <CardDescription className="text-sm md:text-base">
             Listado de pre-facturas guardadas en cola y pendientes de cobro.

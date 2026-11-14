@@ -12,6 +12,7 @@ import { useSidebar } from "@/lib/sidebar-context";
 import { AppUpdateCard } from "@/components/app-update-card";
 import { Loader2 } from "lucide-react";
 import { TurnSessionGate } from "@/components/turn-session-gate";
+import { CatalogOrderNotifications } from "@/components/catalog-order-notifications";
 
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, currentUser, employees, isInitializing } = useStore();
@@ -26,6 +27,9 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   const isBlocked = Boolean(systemConfig?.membership_block?.enabled);
   const allowLoginWhenBlocked = Boolean(systemConfig?.membership_block?.allow_login);
   const tenantAdminId = currentUser?.role === "super_admin" ? null : currentUser?.adminId ?? null;
+  const catalogOrdersOwnerId = String(
+    currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "",
+  ).trim();
   const { status: subscriptionStatus, loading: subscriptionLoading } =
     useTenantSubscription(tenantAdminId);
   const isSubscriptionBlocked = Boolean(subscriptionStatus?.shouldBlockAfterLogin);
@@ -116,6 +120,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
         <Header />
         <div className="flex-1 overflow-auto p-2 pt-16 md:p-[1%] md:pt-20">
           <AppUpdateCard />
+          {catalogOrdersOwnerId && <CatalogOrderNotifications ownerAdminId={catalogOrdersOwnerId} />}
           {tenantAdminId && <TenantSubscriptionNotifications ownerAdminId={tenantAdminId} />}
           {subscriptionStatus?.showRenewalPrompt && (
             <SubscriptionRenewalBanner status={subscriptionStatus} />
