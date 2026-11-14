@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
+import { invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
 import { createClient } from "./lib/supabase/client"
 import "./styles.css"
 
@@ -18,10 +19,22 @@ type Line = Product & { quantity: number }
 
 type CatalogSnapshot = {
   business_name?: string
+  source_table?: "products" | "armacen"
   category_filter?: string | null
   categories?: string[]
   products?: Product[]
   has_more?: boolean
+}
+
+type CatalogCustomer = {
+  id: string
+  name: string
+  phone: string
+}
+
+type CatalogCustomerSession = {
+  sessionToken: string
+  customer: CatalogCustomer
 }
 
 type CachedCatalogPage = {
@@ -44,6 +57,7 @@ const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
 const CATALOG_CACHE_TTL_MS = 60 * 1000
 const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v3:"
+const CUSTOMER_SESSION_PREFIX = "arkham:catalog-customer-session:v1:"
 
 function makeCatalogQueryKey(token: string, search: string, category: string) {
   return JSON.stringify([token, search, category])
@@ -94,6 +108,9 @@ function parseCatalogSnapshot(value: unknown): CatalogSnapshot {
 
   return {
     business_name: typeof data.business_name === "string" ? data.business_name : undefined,
+    source_table: data.source_table === "armacen" || data.source_table === "products"
+      ? data.source_table
+      : undefined,
     category_filter: typeof data.category_filter === "string" ? data.category_filter : null,
     categories,
     products,
@@ -135,6 +152,13 @@ function CatalogoPublico() {
   const [cart, setCart] = useState<Line[]>([])
   const [name, setName] = useState("")
   const [phone, setPhone] = useState("")
+  const [customerSession, setCustomerSession] = useState<CatalogCustomerSession | null>(null)
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [loginPhone, setLoginPhone] = useState("")
+  const [loginPassword, setLoginPassword] = useState("")
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authMessage, setAuthMessage] = useState("")
+  const [sourceTable, setSourceTable] = useState<CatalogSnapshot["source_table"]>()
   const [loading, setLoading] = useState(true)
   const [pageLoading, setPageLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -162,11 +186,22 @@ function CatalogoPublico() {
     setCatalogReady(false)
     setPageLoading(false)
     setProducts([])
+    setCart([])
+    setName("")
+    setPhone("")
+    setCustomerSession(null)
+    setLoginOpen(false)
+    setLoginPhone("")
+    setLoginPassword("")
+    setAuthMessage("")
     setCategories([])
+    setSourceTable(undefined)
     setFixedCategory(null)
     setSelectedCategory("all")
     setHasMore(false)
     setMessage("")
+    setDone(false)
+    setSelectedProduct(null)
 
     if (!token) {
       setMessage("Este enlace no es válido o está desactivado.")
@@ -186,6 +221,7 @@ function CatalogoPublico() {
         if (controller.signal.aborted) return
 
         setBusiness(snapshot.business_name || "Catálogo de productos")
+        setSourceTable(snapshot.source_table)
         setFixedCategory(snapshot.category_filter || null)
         setCategories(snapshot.categories || [])
         setProducts(snapshot.products || [])
@@ -203,6 +239,68 @@ function CatalogoPublico() {
 
     return () => controller.abort()
   }, [supabase, token])
+
+  useEffect(() => {
+    if (!token || sourceTable !== "armacen") return
+
+    const storageKey = `${CUSTOMER_SESSION_PREFIX}${token}`
+    let sessionToken = ""
+    try {
+      const storedSession = window.sessionStorage.getItem(storageKey)
+      const parsed: unknown = storedSession ? JSON.parse(storedSession) : null
+      if (parsed && typeof parsed === "object" && "session_token" in parsed &&
+        typeof parsed.session_token === "string") {
+        sessionToken = parsed.session_token
+      }
+    } catch (error) {
+      console.error("No se pudo leer la sesión del catálogo:", error)
+      setAuthMessage("No se pudo recuperar tu sesión guardada. Inicia sesión nuevamente.")
+    }
+
+    if (!sessionToken) return
+
+    let cancelled = false
+    setAuthLoading(true)
+    void invokeCatalogCustomerAccess(supabase, {
+      action: "session",
+      token,
+      session_token: sessionToken,
+    })
+      .then((response) => {
+        const customer = response.customer
+        if (!customer || typeof customer !== "object" ||
+          !("id" in customer) || typeof customer.id !== "string" ||
+          !("name" in customer) || typeof customer.name !== "string" ||
+          !("phone" in customer) || typeof customer.phone !== "string") {
+          throw new Error("La función devolvió una sesión de cliente inválida")
+        }
+        if (cancelled) return
+        setCustomerSession({
+          sessionToken,
+          customer: { id: customer.id, name: customer.name, phone: customer.phone },
+        })
+        setName(customer.name)
+        setPhone(customer.phone)
+        setAuthMessage("")
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        try {
+          window.sessionStorage.removeItem(storageKey)
+        } catch (storageError) {
+          console.error("No se pudo borrar la sesión vencida del catálogo:", storageError)
+        }
+        setCustomerSession(null)
+        setAuthMessage(errorMessage(error, "Inicia sesión nuevamente para usar tu cuenta."))
+      })
+      .finally(() => {
+        if (!cancelled) setAuthLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [sourceTable, supabase, token])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(searchTerm.trim()), SEARCH_DEBOUNCE_MS)
@@ -294,23 +392,120 @@ function CatalogoPublico() {
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
   const hasActiveFilters = Boolean(searchTerm.trim()) || selectedCategory !== "all"
+  const canUseCustomerAccounts = sourceTable === "armacen"
+
+  const login = async () => {
+    if (!/^\d{10}$/.test(loginPhone)) {
+      setAuthMessage("El teléfono debe tener exactamente 10 dígitos.")
+      return
+    }
+    if (!loginPassword) {
+      setAuthMessage("Escribe tu contraseña.")
+      return
+    }
+
+    setAuthLoading(true)
+    setAuthMessage("")
+    try {
+      const response = await invokeCatalogCustomerAccess(supabase, {
+        action: "login",
+        token,
+        phone: loginPhone,
+        password: loginPassword,
+      })
+      const customer = response.customer
+      if (typeof response.session_token !== "string" ||
+        !customer || typeof customer !== "object" ||
+        !("id" in customer) || typeof customer.id !== "string" ||
+        !("name" in customer) || typeof customer.name !== "string" ||
+        !("phone" in customer) || typeof customer.phone !== "string") {
+        throw new Error("La función devolvió una respuesta de inicio de sesión inválida")
+      }
+
+      const session = {
+        sessionToken: response.session_token,
+        customer: { id: customer.id, name: customer.name, phone: customer.phone },
+      }
+      setCustomerSession(session)
+      setName(session.customer.name)
+      setPhone(session.customer.phone)
+      setLoginPassword("")
+      setLoginOpen(false)
+      try {
+        window.sessionStorage.setItem(
+          `${CUSTOMER_SESSION_PREFIX}${token}`,
+          JSON.stringify({ session_token: session.sessionToken }),
+        )
+      } catch (error) {
+        console.error("No se pudo guardar la sesión del catálogo:", error)
+        setAuthMessage("Sesión iniciada. Si recargas la página, tendrás que volver a iniciar sesión.")
+      }
+    } catch (error) {
+      setAuthMessage(errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente."))
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const logout = async () => {
+    if (!customerSession) return
+    setAuthLoading(true)
+    setAuthMessage("")
+    try {
+      await invokeCatalogCustomerAccess(supabase, {
+        action: "logout",
+        session_token: customerSession.sessionToken,
+      })
+    } catch (error) {
+      setAuthMessage(errorMessage(error, "No se pudo cerrar la sesión en el servidor."))
+    } finally {
+      try {
+        window.sessionStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
+      } catch (error) {
+        console.error("No se pudo borrar la sesión del catálogo:", error)
+      }
+      setCustomerSession(null)
+      setName("")
+      setPhone("")
+      setAuthLoading(false)
+    }
+  }
 
   const send = async () => {
+    if (!cart.length) return
+    if (!customerSession && (!name.trim() || !/^\d{10}$/.test(phone))) {
+      setMessage(!name.trim() ? "Escribe tu nombre." : "El teléfono debe tener exactamente 10 dígitos.")
+      return
+    }
+
     setSending(true)
     setMessage("")
-    const { error } = await supabase.rpc("submit_catalog_order", {
-      p_token: token,
-      p_customer_name: name.trim(),
-      p_customer_phone: phone.trim(),
-      // El servidor vuelve a comprobar precio y stock; enviar sólo lo que usa
-      // reduce la solicitud y evita confiar en datos modificables del navegador.
-      p_items: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
-    })
-    setSending(false)
-    if (error) setMessage(error.message)
-    else {
+    try {
+      const items = cart.map((item) => ({ id: item.id, quantity: item.quantity }))
+      if (customerSession) {
+        await invokeCatalogCustomerAccess(supabase, {
+          action: "order",
+          token,
+          session_token: customerSession.sessionToken,
+          items,
+        })
+      } else {
+        const { error } = await supabase.rpc("submit_catalog_order", {
+          p_token: token,
+          p_customer_name: name.trim(),
+          p_customer_phone: phone,
+          // El servidor vuelve a comprobar precio y stock; enviar sólo lo que usa
+          // reduce la solicitud y evita confiar en datos modificables del navegador.
+          p_items: items,
+        })
+        if (error) throw error
+      }
       setDone(true)
       setCart([])
+    } catch (error) {
+      setMessage(errorMessage(error, "No se pudo enviar el pedido. Inténtalo nuevamente."))
+    } finally {
+      setSending(false)
     }
   }
 
@@ -332,6 +527,18 @@ function CatalogoPublico() {
         <div className="header-inner">
           <div className="brand-mark">A</div>
           <div className="brand-copy"><span>CATÁLOGO</span><strong>{business}</strong></div>
+          {canUseCustomerAccounts && (customerSession ? (
+            <div className="account-actions">
+              <span>Hola, {customerSession.customer.name}</span>
+              <button type="button" className="account-button" onClick={() => void logout()} disabled={authLoading}>
+                {authLoading ? "Cerrando…" : "Salir"}
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="account-button" onClick={() => { setCartOpen(true); setLoginOpen(true) }} disabled={authLoading}>
+              Iniciar sesión
+            </button>
+          ))}
           <div className="header-cart"><span className="cart-symbol">♧</span><span>{itemCount} {itemCount === 1 ? "artículo" : "artículos"}</span></div>
         </div>
       </header>
@@ -372,7 +579,71 @@ function CatalogoPublico() {
       {cartOpen && <div className="cart-backdrop" onClick={() => setCartOpen(false)}>
         <aside className={`cart-panel ${cart.length ? "has-items" : "empty-cart"}`} onClick={(event) => event.stopPropagation()}>
         <div className="cart-header"><div><p className="eyebrow">CARRITO DE COMPRA</p><h2>{cart.length ? "Productos seleccionados" : "Tu carrito está vacío"}</h2></div><div className="cart-header-actions"><span className="cart-badge">{itemCount}</span><button className="cart-close" onClick={() => setCartOpen(false)} aria-label="Cerrar carrito">×</button></div></div>
-        {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div><div className="checkout-form"><input placeholder="Tu nombre" value={name} onChange={(event) => setName(event.target.value)} /><input placeholder="Tu teléfono" value={phone} onChange={(event) => setPhone(event.target.value)} /><button className="submit-button" disabled={sending || !name.trim() || !phone.trim()} onClick={() => void send()}>{sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span></button></div>{message && <p className="error-message">{message}</p>}</> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
+        {cart.length ? <><div className="cart-lines">{cart.map((item) => <div className="cart-line" key={item.id}><div><strong>{item.name}</strong><span>{item.quantity} × RD$ {money(Number(item.sell_price))}</span></div><button className="remove-button" onClick={() => remove(item.id)} aria-label={`Quitar ${item.name}`}>×</button></div>)}</div><div className="cart-total"><span>Total estimado</span><strong>RD$ {money(total)}</strong></div></> : <p className="cart-empty-copy">Toca “Añadir” en cualquier producto para verlo aquí.</p>}
+        {(cart.length > 0 || loginOpen || customerSession) && <div className="checkout-form">
+          {customerSession ? (
+            <div className="customer-session-card">
+              <strong>Pedido para {customerSession.customer.name}</strong>
+              <span>{customerSession.customer.phone}</span>
+              <span>Cuenta del catálogo</span>
+            </div>
+          ) : loginOpen && canUseCustomerAccounts ? (
+            <>
+              <input
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="Teléfono de 10 dígitos"
+                value={loginPhone}
+                onChange={(event) => setLoginPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
+              />
+              <input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Contraseña"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+              />
+              <button className="submit-button" disabled={authLoading || !/^\d{10}$/.test(loginPhone) || !loginPassword} onClick={() => void login()}>
+                {authLoading ? "Iniciando sesión…" : "Iniciar sesión"}
+              </button>
+              <button type="button" className="text-button" onClick={() => { setLoginOpen(false); setAuthMessage("") }}>
+                Continuar como invitado
+              </button>
+            </>
+          ) : (
+            <>
+              <input
+                autoComplete="name"
+                placeholder="Tu nombre"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+              <input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                maxLength={10}
+                pattern="[0-9]{10}"
+                placeholder="Teléfono (10 dígitos)"
+                value={phone}
+                onChange={(event) => setPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
+              />
+              {phone.length > 0 && phone.length < 10 && <small className="phone-hint">Escribe los 10 dígitos del teléfono para habilitar el pedido.</small>}
+              {canUseCustomerAccounts && <button type="button" className="text-button" onClick={() => { setLoginOpen(true); setAuthMessage("") }}>
+                Ya tengo una cuenta
+              </button>}
+              {cart.length > 0 && <button className="submit-button" disabled={sending || authLoading || !name.trim() || !/^\d{10}$/.test(phone)} onClick={() => void send()}>
+                {sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span>
+              </button>}
+            </>
+          )}
+          {customerSession && cart.length > 0 && <button className="submit-button" disabled={sending || authLoading} onClick={() => void send()}>
+            {sending ? "Enviando pedido…" : "Enviar pedido"}<span>→</span>
+          </button>}
+          {authMessage && <p className="error-message">{authMessage}</p>}
+          {message && <p className="error-message">{message}</p>}
+        </div>}
         </aside>
       </div>}
 

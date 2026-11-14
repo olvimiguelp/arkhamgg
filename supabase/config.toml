@@ -1,2 +1,5 @@
 [functions.send-payment-reminders]
 verify_jwt = false
+
+[functions.catalog-customer-access]
+verify_jwt = false

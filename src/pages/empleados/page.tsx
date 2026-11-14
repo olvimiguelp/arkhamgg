@@ -56,6 +56,11 @@ import {
 import { useSystemConfig } from "@/hooks/use-system-config"
 import { getPublicCatalogUrl, savePublicCatalogUrl } from "@/lib/public-catalog-url"
 import { getOrCreatePublicCatalogShare, type PublicCatalogSource } from "@/lib/public-catalog-share"
+import {
+  invokeCatalogCustomerAccess,
+  type CatalogCustomerAccount,
+  type CatalogOrderHistory,
+} from "@/lib/catalog-customer-access"
 import { ALMACEN_CATEGORY_OPTIONS, getAlmacenCategoryFilterValue, getAlmacenCategoryLabel, isAlmacenCategory } from "@/lib/almacen"
 
 const readAccessFlag = (value: any): boolean => {
@@ -206,6 +211,16 @@ export default function EmpleadosPage() {
   const [publicCatalogCategories, setPublicCatalogCategories] = useState<string[]>([])
   const [isAlmacenCatalogDialogOpen, setIsAlmacenCatalogDialogOpen] = useState(false)
   const [selectedAlmacenCategories, setSelectedAlmacenCategories] = useState<string[]>([])
+  const [isCatalogCustomerDialogOpen, setIsCatalogCustomerDialogOpen] = useState(false)
+  const [catalogCustomerView, setCatalogCustomerView] = useState<"accounts" | "history">("accounts")
+  const [catalogCustomerName, setCatalogCustomerName] = useState("")
+  const [catalogCustomerPhone, setCatalogCustomerPhone] = useState("")
+  const [catalogCustomerPassword, setCatalogCustomerPassword] = useState("")
+  const [catalogCustomers, setCatalogCustomers] = useState<CatalogCustomerAccount[]>([])
+  const [catalogOrderHistory, setCatalogOrderHistory] = useState<CatalogOrderHistory[]>([])
+  const [isLoadingCatalogCustomers, setIsLoadingCatalogCustomers] = useState(false)
+  const [isCreatingCatalogCustomer, setIsCreatingCatalogCustomer] = useState(false)
+  const [createdCatalogCredentials, setCreatedCatalogCredentials] = useState<{ phone: string; password: string } | null>(null)
   const almacenCatalogCategories = useMemo(() => {
     const options = new Map(ALMACEN_CATEGORY_OPTIONS.map(({ value, label }) => [String(value), label]))
     products.filter((product) => product.sourceTable === "armacen" ||
@@ -238,6 +253,110 @@ export default function EmpleadosPage() {
   const canAddEmployees = canCurrentUserPerform("canAdd")
   const canEditEmployees = canCurrentUserPerform("canEdit")
   const canDeleteEmployees = canCurrentUserPerform("canDelete")
+
+  const getCatalogStaffCredentials = () => {
+    if (!currentUser || !canAccessEmployees) {
+      throw new Error("No tienes permiso para administrar usuarios del catálogo.")
+    }
+    const employee = employees.find((candidate) => candidate.id === currentUser.id)
+    if (!employee?.password) {
+      throw new Error("No se pudo validar la sesión del empleado. Vuelve a iniciar sesión.")
+    }
+    return { actor_id: employee.id, actor_password: employee.password }
+  }
+
+  const loadCatalogCustomerOverview = async () => {
+    setIsLoadingCatalogCustomers(true)
+    try {
+      const response = await invokeCatalogCustomerAccess({
+        action: "overview",
+        ...getCatalogStaffCredentials(),
+      })
+      setCatalogCustomers(response.customers)
+      setCatalogOrderHistory(response.orders)
+    } catch (error) {
+      console.error("Error al cargar clientes del catálogo:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo cargar la información del catálogo.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoadingCatalogCustomers(false)
+    }
+  }
+
+  const openCatalogCustomerDialog = () => {
+    setCatalogCustomerView("accounts")
+    setIsCatalogCustomerDialogOpen(true)
+    void loadCatalogCustomerOverview()
+  }
+
+  const handleCreateCatalogCustomer = async () => {
+    if (!canAddEmployees) {
+      toast({
+        title: "Sin permiso",
+        description: "Tu usuario no tiene permiso para crear cuentas de clientes.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!catalogCustomerName.trim()) {
+      toast({ title: "Nombre requerido", description: "Escribe el nombre del cliente.", variant: "destructive" })
+      return
+    }
+    if (!/^\d{10}$/.test(catalogCustomerPhone)) {
+      toast({ title: "Teléfono inválido", description: "El teléfono debe tener exactamente 10 dígitos.", variant: "destructive" })
+      return
+    }
+    if (catalogCustomerPassword.length < 8) {
+      toast({ title: "Contraseña inválida", description: "Usa al menos 8 caracteres.", variant: "destructive" })
+      return
+    }
+
+    setIsCreatingCatalogCustomer(true)
+    try {
+      const response = await invokeCatalogCustomerAccess({
+        action: "create",
+        ...getCatalogStaffCredentials(),
+        name: catalogCustomerName.trim(),
+        phone: catalogCustomerPhone,
+        password: catalogCustomerPassword,
+      })
+      setCatalogCustomers((current) => [response.customer, ...current.filter((customer) => customer.id !== response.customer.id)])
+      setCreatedCatalogCredentials({ phone: response.customer.phone, password: catalogCustomerPassword })
+      setCatalogCustomerName("")
+      setCatalogCustomerPhone("")
+      setCatalogCustomerPassword("")
+      toast({ title: "Cuenta creada", description: "El cliente podrá iniciar sesión solo en el catálogo externo." })
+    } catch (error) {
+      console.error("Error al crear cuenta de cliente del catálogo:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "No se pudo crear la cuenta del catálogo.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsCreatingCatalogCustomer(false)
+    }
+  }
+
+  const copyCreatedCatalogCredentials = async () => {
+    if (!createdCatalogCredentials) return
+    try {
+      await navigator.clipboard.writeText(
+        `Teléfono: ${createdCatalogCredentials.phone}\nContraseña: ${createdCatalogCredentials.password}`,
+      )
+      toast({ title: "Credenciales copiadas" })
+    } catch (error) {
+      console.error("Error al copiar credenciales del catálogo:", error)
+      toast({
+        title: "No se pudieron copiar",
+        description: "Copia el teléfono y la contraseña manualmente antes de cerrar esta ventana.",
+        variant: "destructive",
+      })
+    }
+  }
 
   const adminContact = useMemo(() => {
     const activeAdmins = employees.filter((employee) => employee.role === "admin" && employee.status === "active")
@@ -704,6 +823,10 @@ export default function EmpleadosPage() {
               <CardDescription>Lista de todos los empleados registrados</CardDescription>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
+            {canAccessEmployees && <Button variant="outline" onClick={openCatalogCustomerDialog} className="min-h-11">
+              <Users className="mr-2 h-4 w-4" />
+              Clientes catálogo
+            </Button>}
             <Button variant="outline" onClick={() => { setPublicCatalogLink(""); setIsPublicCatalogDialogOpen(true) }} disabled={isCreatingPublicCatalog} className="min-h-11">
               {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
               Compartir catálogo
@@ -1144,6 +1267,200 @@ export default function EmpleadosPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={isCatalogCustomerDialogOpen}
+        onOpenChange={(open) => {
+          setIsCatalogCustomerDialogOpen(open)
+          if (!open) {
+            setCreatedCatalogCredentials(null)
+            setCatalogCustomerPassword("")
+          }
+        }}
+      >
+        <DialogContent className="mx-2 max-h-[90vh] w-[95vw] max-w-4xl overflow-y-auto sm:mx-0">
+          <DialogHeader>
+            <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
+            <DialogDescription>
+              Estas cuentas solo pueden iniciar sesión en el catálogo externo; no crean empleados ni dan acceso al sistema interno.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex gap-2 border-b pb-3">
+            <Button
+              type="button"
+              variant={catalogCustomerView === "accounts" ? "default" : "outline"}
+              onClick={() => setCatalogCustomerView("accounts")}
+            >
+              Cuentas
+            </Button>
+            <Button
+              type="button"
+              variant={catalogCustomerView === "history" ? "default" : "outline"}
+              onClick={() => setCatalogCustomerView("history")}
+            >
+              Historial de pedidos
+            </Button>
+          </div>
+
+          {catalogCustomerView === "accounts" ? (
+            <div className="space-y-4">
+              {createdCatalogCredentials && (
+                <div className="flex flex-col gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-semibold">Cuenta creada. Comparte las credenciales con el cliente.</p>
+                    <p>Teléfono: {createdCatalogCredentials.phone}</p>
+                    <p>Contraseña: {createdCatalogCredentials.password}</p>
+                    <p className="text-xs">La contraseña no se guarda en texto y no podrá recuperarse después de cerrar esta ventana.</p>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => void copyCreatedCatalogCredentials()}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copiar credenciales
+                  </Button>
+                </div>
+              )}
+
+              {!canAddEmployees && (
+                <p className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
+                  Tu usuario puede consultar las cuentas y el historial, pero no tiene permiso para crear cuentas nuevas.
+                </p>
+              )}
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-3">
+                <div className="space-y-2">
+                  <Label htmlFor="catalog-customer-name">Nombre del cliente</Label>
+                  <Input
+                    id="catalog-customer-name"
+                    autoComplete="name"
+                    value={catalogCustomerName}
+                    onChange={(event) => setCatalogCustomerName(event.target.value)}
+                    placeholder="Nombre completo"
+                    disabled={isCreatingCatalogCustomer}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="catalog-customer-phone">Teléfono (10 dígitos)</Label>
+                  <Input
+                    id="catalog-customer-phone"
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={catalogCustomerPhone}
+                    onChange={(event) => setCatalogCustomerPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
+                    placeholder="8095550100"
+                    disabled={isCreatingCatalogCustomer}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="catalog-customer-password">Contraseña inicial</Label>
+                  <Input
+                    id="catalog-customer-password"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={8}
+                    value={catalogCustomerPassword}
+                    onChange={(event) => setCatalogCustomerPassword(event.target.value)}
+                    placeholder="Mínimo 8 caracteres"
+                    disabled={isCreatingCatalogCustomer}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  className="sm:col-span-3"
+                  onClick={() => void handleCreateCatalogCustomer()}
+                  disabled={
+                    isCreatingCatalogCustomer ||
+                    !canAddEmployees ||
+                    !catalogCustomerName.trim() ||
+                    !/^\d{10}$/.test(catalogCustomerPhone) ||
+                    catalogCustomerPassword.length < 8
+                  }
+                >
+                  {isCreatingCatalogCustomer && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Crear cuenta exclusiva del catálogo
+                </Button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold">Cuentas registradas ({catalogCustomers.length})</h3>
+                <Button type="button" variant="outline" onClick={() => void loadCatalogCustomerOverview()} disabled={isLoadingCatalogCustomers}>
+                  {isLoadingCatalogCustomers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Actualizar
+                </Button>
+              </div>
+              {isLoadingCatalogCustomers ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">Cargando cuentas…</p>
+              ) : catalogCustomers.length ? (
+                <div className="max-h-64 overflow-auto rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Cliente</TableHead>
+                        <TableHead>Teléfono</TableHead>
+                        <TableHead>Creada</TableHead>
+                        <TableHead>Estado</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {catalogCustomers.map((customer) => (
+                        <TableRow key={customer.id}>
+                          <TableCell>{customer.name}</TableCell>
+                          <TableCell>{customer.phone}</TableCell>
+                          <TableCell>{new Date(customer.created_at).toLocaleDateString("es-DO")}</TableCell>
+                          <TableCell>
+                            <Badge variant={customer.is_active ? "default" : "secondary"}>
+                              {customer.is_active ? "Activa" : "Inactiva"}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              ) : (
+                <p className="py-4 text-center text-sm text-muted-foreground">Todavía no hay cuentas de catálogo.</p>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-muted-foreground">Pedidos recientes de almacén, incluyendo compras como invitado. Se muestran hasta 100 pedidos.</p>
+                <Button type="button" variant="outline" onClick={() => void loadCatalogCustomerOverview()} disabled={isLoadingCatalogCustomers}>
+                  {isLoadingCatalogCustomers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Actualizar historial
+                </Button>
+              </div>
+              {isLoadingCatalogCustomers ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">Cargando historial…</p>
+              ) : catalogOrderHistory.length ? (
+                <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+                  {catalogOrderHistory.map((order) => (
+                    <div key={order.id} className="space-y-2 rounded-md border p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="font-semibold">{order.customer_name} · {order.customer_phone}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {order.invoice_number} · {new Date(order.created_at).toLocaleString("es-DO")}
+                          </p>
+                        </div>
+                        <p className="font-semibold">RD$ {Number(order.total).toLocaleString("es-DO", { minimumFractionDigits: 2 })}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+                        {order.items.map((item, index) => (
+                          <span key={`${order.id}-${item.id ?? index}`} className="rounded bg-muted px-2 py-1">
+                            {Number(item.quantity ?? 1)} × {item.name || "Artículo"}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="py-4 text-center text-sm text-muted-foreground">Todavía no hay pedidos de almacén desde el catálogo.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
         <DialogContent className="w-[95vw] max-w-[520px]">
