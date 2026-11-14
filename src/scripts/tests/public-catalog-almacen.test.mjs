@@ -13,6 +13,7 @@ const battery = '00000000-0000-4000-8000-000000000011'
 const screen = '00000000-0000-4000-8000-000000000012'
 const custom = '00000000-0000-4000-8000-000000000013'
 const foreign = '00000000-0000-4000-8000-000000000014'
+const unavailable = '00000000-0000-4000-8000-000000000015'
 const historicalSale = '00000000-0000-4000-8000-000000000021'
 
 try {
@@ -58,7 +59,8 @@ try {
       ('${battery}', '${owner}', '20001', 'Batería A', ' Batería ', 10, 100, '1'),
       ('${screen}', '${owner}', '10001', 'Pantalla A', 'pantallas', 10, 200, '2'),
       ('${custom}', '${owner}', '80001', 'Conector A', 'Conectores USB', 10, 50, '3'),
-      ('${foreign}', '${otherOwner}', '20002', 'Otra batería', 'baterias', 10, 100, '4');
+      ('${foreign}', '${otherOwner}', '20002', 'Otra batería', 'baterias', 10, 100, '4'),
+      ('${unavailable}', '${owner}', '20003', 'Batería agotada', 'baterias', 0, 100, '5');
     INSERT INTO products(id, owner_admin_id, sku, name, category, stock, sell_price, wholesale_price)
       VALUES ('${battery}', '${owner}', 'P001', 'Producto normal', 'Accesorios', 20, 300, 250);
     INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter) VALUES
@@ -73,6 +75,9 @@ try {
   const customerMigration = await readFile(new URL('../073-catalog-customer-accounts.sql', import.meta.url), 'utf8')
   await db.exec(customerMigration)
   await db.exec(customerMigration) // The account migration and function updates must be repeatable.
+  const outOfStockMigration = await readFile(new URL('../074-public-catalog-out-of-stock.sql', import.meta.url), 'utf8')
+  await db.exec(outOfStockMigration)
+  await db.exec(outOfStockMigration)
 
   const snapshot = async (token, search = null, category = null, offset = 0, limit = 24) =>
     (await db.query('SELECT get_public_catalog_snapshot($1,$2,$3,$4,$5,TRUE) AS data',
@@ -83,7 +88,7 @@ try {
     [token, 'Cliente prueba', phone, JSON.stringify(items)])
   const stock = async (table, id) => (await db.query(`SELECT stock FROM ${table} WHERE id=$1`, [id])).rows[0].stock
 
-  assert.deepEqual((await snapshot('batteries')).products.map(p => p.id), [battery])
+  assert.deepEqual((await snapshot('batteries')).products.map(p => p.id), [battery, unavailable])
   assert.deepEqual((await snapshot('batteries')).categories, ['baterias'])
   assert.equal((await snapshot('batteries')).category_filter, 'baterias')
   assert.deepEqual((await snapshot('screens')).products.map(p => p.id), [screen])
@@ -91,6 +96,8 @@ try {
   assert.equal((await snapshot('batteries', null, 'pantallas')).products.length, 0)
   assert.equal((await snapshot('batteries', 'Pantalla')).products.length, 0)
   assert.equal((await snapshot('batteries', '20001')).products.length, 1)
+  assert.deepEqual((await snapshot('batteries')).products.find(p => p.id === unavailable),
+    { id: unavailable, sku: '20003', name: 'Batería agotada', category: 'baterias', stock: 0, sell_price: 100, image_url: null, image_thumbnail_url: null })
   assert.equal((await snapshot('normal')).products[0].sell_price, 300)
   assert.equal((await snapshot('wholesale')).products[0].sell_price, 250)
   assert.equal((await snapshot('normal')).products[0].name, 'Producto normal')
@@ -115,12 +122,12 @@ try {
   const page2 = await snapshot('batteries', null, null, 24)
   assert.equal(page1.products.length, 24)
   assert.equal(page1.has_more, true)
-  assert.equal(page2.products.length, 2)
+  assert.equal(page2.products.length, 4)
   assert.equal(page2.has_more, false)
-  assert.equal(new Set([...page1.products, ...page2.products].map(p => p.id)).size, 26)
+  assert.equal(new Set([...page1.products, ...page2.products].map(p => p.id)).size, 28)
   assert.ok([...page1.products, ...page2.products].every(p => p.category === 'baterias'))
   const legacy = (await db.query("SELECT * FROM get_public_catalog_products('batteries')")).rows
-  assert.equal(legacy.length, 26)
+  assert.equal(legacy.length, 28)
   assert.ok(legacy.every(p => p.category === 'baterias'))
   assert.deepEqual((await db.query("SELECT * FROM get_public_catalog_categories('batteries')")).rows, [{ category: 'baterias' }])
 

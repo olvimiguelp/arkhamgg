@@ -395,7 +395,9 @@ function CatalogoPublico() {
     }
   }, [catalogReady, debouncedSearch, hasMore, loadingMore, pageLoading, products.length, selectedCategory, supabase, token])
 
-  const add = (product: Product) =>
+  const add = (product: Product) => {
+    if (product.stock <= 0) return
+
     setCart((current) => {
       const found = current.find((item) => item.id === product.id)
       if (found) {
@@ -407,6 +409,7 @@ function CatalogoPublico() {
       }
       return [...current, { ...product, quantity: 1 }]
     })
+  }
 
   const remove = (id: string) => setCart((current) => current.filter((item) => item.id !== id))
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
@@ -583,13 +586,13 @@ function CatalogoPublico() {
                 </div>
                 <div className="product-info">
                   <h3>{product.name}</h3>
-                  <p className="stock-label"><span className="stock-dot" /> {product.stock} disponibles</p>
-                  <div className="product-footer"><div><span className="price-label">Precio</span><strong>RD$ {money(Number(product.sell_price))}</strong></div><button className="add-button" onClick={(event) => { event.stopPropagation(); add(product) }}>{inCart ? `Añadir más · ${inCart}` : "Añadir"}<span>＋</span></button></div>
+                  {product.stock <= 0 && <p className="stock-label unavailable-label">Esta unidad no está disponible</p>}
+                  <div className="product-footer"><div><span className="price-label">Precio</span><strong>RD$ {money(Number(product.sell_price))}</strong></div><button className="add-button" disabled={product.stock <= 0} onClick={(event) => { event.stopPropagation(); add(product) }}>{inCart ? `Añadir más · ${inCart}` : "Añadir"}<span>＋</span></button></div>
                 </div>
               </article>
             })}
           </section>
-        ) : <div className="empty-card"><span>⌁</span><h3>{hasActiveFilters ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{hasActiveFilters ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos con stock en este momento."}</p></div>}
+        ) : <div className="empty-card"><span>⌁</span><h3>{hasActiveFilters ? "No encontramos productos" : "No hay productos disponibles"}</h3><p>{hasActiveFilters ? "Prueba con otro nombre, código o categoría." : "Este catálogo no tiene productos para mostrar en este momento."}</p></div>}
 
         {hasMore && <div className="pagination"><button type="button" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? "Cargando…" : "Cargar más productos"}</button></div>}
       </main>
@@ -671,7 +674,7 @@ function CatalogoPublico() {
         <div className="product-modal" role="dialog" aria-modal="true" aria-label={selectedProduct.name} onClick={(event) => event.stopPropagation()}>
           <button className="modal-close" onClick={() => setSelectedProduct(null)} aria-label="Cerrar">×</button>
           <div className="modal-image">{selectedProduct.image_url || selectedProduct.image_thumbnail_url ? <img src={selectedProduct.image_url || selectedProduct.image_thumbnail_url || ""} alt={selectedProduct.name} /> : <div className="image-placeholder"><span>✦</span></div>}</div>
-          <div className="modal-content">{selectedProduct.category && <span className="category-badge">{selectedProduct.category}</span>}<h2>{selectedProduct.name}</h2><p className="stock-label"><span className="stock-dot" /> {selectedProduct.stock} disponibles</p><strong className="modal-price">RD$ {money(Number(selectedProduct.sell_price))}</strong><button className="submit-button modal-add" onClick={() => { add(selectedProduct); setSelectedProduct(null) }}>Añadir al carrito <span>＋</span></button></div>
+          <div className="modal-content">{selectedProduct.category && <span className="category-badge">{selectedProduct.category}</span>}<h2>{selectedProduct.name}</h2>{selectedProduct.stock <= 0 && <p className="stock-label unavailable-label">Esta unidad no está disponible</p>}<strong className="modal-price">RD$ {money(Number(selectedProduct.sell_price))}</strong><button className="submit-button modal-add" disabled={selectedProduct.stock <= 0} onClick={() => { add(selectedProduct); setSelectedProduct(null) }}>Añadir al carrito <span>＋</span></button></div>
         </div>
       </div>}
     </div>

@@ -49,11 +49,13 @@ button { cursor: pointer; }
 .product-info h3 { overflow: hidden; margin: 0 0 7px; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .stock-label { display: flex; align-items: center; gap: 6px; margin: 0 0 18px; color: #71717a; font-size: 12px; }
 .stock-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
+.unavailable-label { color: #dc2626; }
 .product-footer { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
 .price-label { display: block; color: #a1a1aa; font-size: 11px; }
 .product-footer strong { display: block; margin-top: 2px; font-size: 17px; letter-spacing: -.02em; }
 .add-button, .submit-button { display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 7px; background: #18181b; color: #fff; font-size: 12px; font-weight: 600; transition: background .2s; }
 .add-button { min-width: 98px; padding: 9px 11px; }
+.add-button:disabled { cursor: not-allowed; opacity: .45; }
 .add-button span { font-size: 17px; line-height: 10px; }
 .add-button:hover, .submit-button:hover:not(:disabled) { background: #3f3f46; }
 .cart-backdrop { position: fixed; inset: 0; z-index: 12; background: rgba(24,24,27,.18); }
