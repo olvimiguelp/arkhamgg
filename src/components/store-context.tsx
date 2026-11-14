@@ -2533,6 +2533,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
                   name: product.name,
                   category: product.category,
                   image_url: product.imageUrl || null,
+                  image_thumbnail_url: product.imageThumbnailUrl || null,
                   box_number: product.boxNumber || null,
                   stock: product.stock,
                   min_stock: product.minStock,
@@ -2603,7 +2604,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (product.sku !== undefined) updateData.sku = product.sku
       if (product.name !== undefined) updateData.name = product.name
       if (product.imageUrl !== undefined) updateData.image_url = product.imageUrl || null
-      if (targetTable === "products" && product.imageThumbnailUrl !== undefined) updateData.image_thumbnail_url = product.imageThumbnailUrl || null
+      if (product.imageThumbnailUrl !== undefined) updateData.image_thumbnail_url = product.imageThumbnailUrl || null
       if (product.category !== undefined) updateData.category = product.category
       if (product.stock !== undefined) updateData.stock = product.stock
       if (product.minStock !== undefined) updateData.min_stock = product.minStock

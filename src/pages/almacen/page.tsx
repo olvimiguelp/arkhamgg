@@ -53,6 +53,7 @@ import {
   normalizeAlmacenBoxNumber,
 } from "@/lib/almacen"
 import { sameSaleItemSource } from "@/lib/transaction-classification"
+import { uploadProductImageToStorage } from "@/lib/product-image-storage"
 
 type FormState = {
   boxNumber: string
@@ -156,6 +157,8 @@ export default function AlmacenPage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [pdfReportType, setPdfReportType] = useState<"low" | "stop" | "total">("low")
   const [formData, setFormData] = useState<FormState>(INITIAL_FORM)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
   const deferredSearchTerm = useDeferredValue(searchTerm)
 
   const employeePermissions = employees.find((employee) => employee.email === currentUser?.email)?.permissions
@@ -353,6 +356,8 @@ export default function AlmacenPage() {
   const resetForm = useCallback(() => {
     setFormData(INITIAL_FORM)
     setEditingId(null)
+    setImageFile(null)
+    setImagePreview(null)
   }, [])
 
   const openDialog = useCallback(() => {
@@ -412,6 +417,8 @@ export default function AlmacenPage() {
       minStock: product.minStock?.toString() || "1",
       supplier: product.supplier || "",
     })
+    setImageFile(null)
+    setImagePreview(product.imageThumbnailUrl || product.imageUrl || null)
     setIsDialogOpen(true)
   }
 
@@ -682,6 +689,24 @@ export default function AlmacenPage() {
     }
 
     try {
+      let uploadedImageUrl: string | undefined
+      let uploadedImageThumbnailUrl: string | undefined
+
+      if (imageFile) {
+        const uploadId = editingProduct?.sourceId || (editingId ? editingId.replace(/^armacen::/, "") : String(Date.now()))
+        const result = await uploadProductImageToStorage(uploadId, imageFile)
+        if (!result.success || !result.publicUrl || !result.thumbnailUrl) {
+          toast({
+            title: "No se pudo subir la imagen",
+            description: result.error || "Intenta nuevamente con otra imagen.",
+            variant: "destructive",
+          })
+          return
+        }
+        uploadedImageUrl = result.publicUrl
+        uploadedImageThumbnailUrl = result.thumbnailUrl
+      }
+
       if (editingId) {
         await updateProduct(editingId, {
           sku: resolvedSku,
@@ -695,6 +720,8 @@ export default function AlmacenPage() {
           supplier: formData.supplier,
           capacity: editingProduct?.capacity,
           imei: normalizedImei || undefined,
+          imageUrl: uploadedImageUrl || editingProduct?.imageUrl,
+          imageThumbnailUrl: uploadedImageThumbnailUrl || editingProduct?.imageThumbnailUrl,
         })
 
         toast({
@@ -714,6 +741,8 @@ export default function AlmacenPage() {
           supplier: formData.supplier,
           capacity: undefined,
           imei: normalizedImei || undefined,
+          imageUrl: uploadedImageUrl,
+          imageThumbnailUrl: uploadedImageThumbnailUrl,
         })
 
         setLabelProduct({
@@ -1063,7 +1092,17 @@ export default function AlmacenPage() {
             return (
               <div key={product.id} className="overflow-hidden rounded-lg border bg-background p-3 shadow-sm">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
+                  {product.imageThumbnailUrl || product.imageUrl ? (
+                    <img
+                      src={product.imageThumbnailUrl || product.imageUrl}
+                      alt={product.name}
+                      className="h-16 w-16 shrink-0 rounded-md object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="h-16 w-16 shrink-0 rounded-md bg-muted/40" />
+                  )}
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold leading-tight">{product.name}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {boxNumber ? `Caja ${boxNumber}` : "Sin caja"} • {formatAlmacenSku(product.sku) || "-"}
@@ -1158,7 +1197,21 @@ export default function AlmacenPage() {
                           </div>
                         </TableCell>
                         <TableCell className="font-mono">{formatAlmacenSku(product.sku) || "-"}</TableCell>
-                        <TableCell>{product.name}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {product.imageThumbnailUrl || product.imageUrl ? (
+                              <img
+                                src={product.imageThumbnailUrl || product.imageUrl}
+                                alt={product.name}
+                                className="h-8 w-8 rounded object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="h-8 w-8 rounded bg-muted/40" />
+                            )}
+                            <span>{product.name}</span>
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <Badge variant="secondary">{categoryLabel}</Badge>
                         </TableCell>
@@ -1405,6 +1458,24 @@ export default function AlmacenPage() {
                   value={formData.minStock}
                   onChange={(event) => handleInputChange("minStock", event.target.value)}
                 />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Imagen del producto (opcional)</Label>
+              <div className="flex flex-wrap items-center gap-4">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] || null
+                    setImageFile(file)
+                    setImagePreview(file ? URL.createObjectURL(file) : editingProduct?.imageThumbnailUrl || editingProduct?.imageUrl || null)
+                  }}
+                />
+                {imagePreview && (
+                  <img src={imagePreview} alt="Vista previa del producto" className="h-16 w-16 rounded-md object-cover" />
+                )}
               </div>
             </div>
 
