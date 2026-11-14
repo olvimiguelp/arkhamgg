@@ -426,7 +426,7 @@ export default function CashClosingPage() {
   })()
 
   useRealtimeTableRefresh(
-    ["cash_closings", "sales", "payments", "expenses", "returns"],
+    ["cash_closings", "sales", "payments", "expenses", "returns", "repairs"],
     () => {
       void reloadCashClosings()
       void refreshData()
@@ -607,7 +607,7 @@ export default function CashClosingPage() {
   const dayRepairs = useMemo(
     () =>
       filterByDate(repairs, "date").filter((r) => {
-        if (r.status !== "completado") return false
+        if ((Number(r.deposit) || 0) <= 0) return false
         if (selectedEmployeeId === "all") return true
 
         const isSameTechId = r.technician === selectedEmployeeId
@@ -847,7 +847,7 @@ export default function CashClosingPage() {
     })
 
     dayRepairs.forEach((repair) => {
-      methods.cash.repairs += Number(repair.cost) || 0
+      methods.cash.repairs += Number(repair.deposit) || 0
     })
 
     dayExpensesForClosing.forEach((expense) => {
@@ -901,7 +901,7 @@ export default function CashClosingPage() {
       }, 0)
 
     const totalPayments = dayPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
-    const totalRepairs = dayRepairs.reduce((sum, r) => sum + (Number(r.cost) || 0), 0)
+    const totalRepairs = dayRepairs.reduce((sum, r) => sum + (Number(r.deposit) || 0), 0)
     const totalExpenses = dayExpensesForClosing.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
     const totalCostoVenta = dayExpensesForClosing
       .filter((e) => e.description && e.description.includes("Costo Venta"))

@@ -710,7 +710,7 @@ export function RepairDialog({
     const deviceName = formatDeviceName(brand, model, editingRepair?.device)
     const repairItems = offeredServiceNames.map((service, index) => {
       const serviceCharge = Number(serviceDetails[service]?.charge) || 0
-      const lineTotal = pendingBalance > 0 && serviceChargeTotal > 0
+      const lineTotal = serviceChargeTotal > 0
         ? pendingBalance * (serviceCharge / serviceChargeTotal)
         : serviceCharge
       return {

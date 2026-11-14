@@ -356,9 +356,9 @@ export default function ReparacionesPage() {
     }
 
     const ticketNumber = repair.repair_number || "Orden"
-    const totalCost = Number(repair.cost) || 0
-    const depositAmt = Number(repair.deposit) || 0
-    const pendingAmt = repair.pendingBalance !== undefined ? Number(repair.pendingBalance) : Math.max(0, totalCost - depositAmt)
+    const totalCost = Math.max(0, Number(repair.cost) || 0)
+    const depositAmt = Math.min(totalCost, Math.max(0, Number(repair.deposit) || 0))
+    const pendingAmt = Math.max(0, totalCost - depositAmt)
     const statusLabel = WORKFLOW_STATES.find((s) => s.id === repair.status)?.label || repair.status
 
     const deviceFull = formatDeviceName(repair.brand, repair.model, repair.device) || "su equipo"
@@ -425,7 +425,7 @@ export default function ReparacionesPage() {
     const deviceName = formatDeviceName(repair.brand, repair.model, repair.device)
     const repairItems = serviceItems.map((service, index) => {
       const serviceCharge = Number(service.charge) || 0
-      const lineTotal = pendingAmt > 0 && serviceChargeTotal > 0
+      const lineTotal = serviceChargeTotal > 0
         ? pendingAmt * (serviceCharge / serviceChargeTotal)
         : serviceCharge
       return {
