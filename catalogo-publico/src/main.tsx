@@ -18,6 +18,7 @@ type Line = Product & { quantity: number }
 
 type CatalogSnapshot = {
   business_name?: string
+  category_filter?: string | null
   categories?: string[]
   products?: Product[]
   has_more?: boolean
@@ -42,7 +43,7 @@ const money = (value: number) =>
 const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
 const CATALOG_CACHE_TTL_MS = 60 * 1000
-const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v2:"
+const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v3:"
 
 function makeCatalogQueryKey(token: string, search: string, category: string) {
   return JSON.stringify([token, search, category])
@@ -93,6 +94,7 @@ function parseCatalogSnapshot(value: unknown): CatalogSnapshot {
 
   return {
     business_name: typeof data.business_name === "string" ? data.business_name : undefined,
+    category_filter: typeof data.category_filter === "string" ? data.category_filter : null,
     categories,
     products,
     has_more: data.has_more === true,
@@ -142,6 +144,7 @@ function CatalogoPublico() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
   const [categories, setCategories] = useState<string[]>([])
+  const [fixedCategory, setFixedCategory] = useState<string | null>(null)
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [searchTerm, setSearchTerm] = useState("")
   const [debouncedSearch, setDebouncedSearch] = useState("")
@@ -160,6 +163,8 @@ function CatalogoPublico() {
     setPageLoading(false)
     setProducts([])
     setCategories([])
+    setFixedCategory(null)
+    setSelectedCategory("all")
     setHasMore(false)
     setMessage("")
 
@@ -181,6 +186,7 @@ function CatalogoPublico() {
         if (controller.signal.aborted) return
 
         setBusiness(snapshot.business_name || "Catálogo de productos")
+        setFixedCategory(snapshot.category_filter || null)
         setCategories(snapshot.categories || [])
         setProducts(snapshot.products || [])
         setHasMore(Boolean(snapshot.has_more))
@@ -331,7 +337,7 @@ function CatalogoPublico() {
       </header>
 
       <main className="content-wrap">
-        <div className="catalog-filter-row"><label className="product-search"><span>Buscar producto</span><div className="search-input-wrap"><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre o código del producto" type="search" /><button type="button" onClick={() => setSearchTerm("")} aria-label="Limpiar búsqueda" hidden={!searchTerm}>×</button></div></label><label className="category-filter"><span>Categoría</span><select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">Todas</option>{categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
+        <div className="catalog-filter-row"><label className="product-search"><span>Buscar producto</span><div className="search-input-wrap"><input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre o código del producto" type="search" /><button type="button" onClick={() => setSearchTerm("")} aria-label="Limpiar búsqueda" hidden={!searchTerm}>×</button></div></label><label className="category-filter"><span>Categoría</span><select value={selectedCategory} disabled={Boolean(fixedCategory)} onChange={(event) => setSelectedCategory(event.target.value)}><option value="all">{fixedCategory || "Todas"}</option>{!fixedCategory && categories.map((category) => <option key={category} value={category}>{category}</option>)}</select></label></div>
 
         {pageLoading ? <div className="page-loading"><div className="loader" /><p>Cargando productos...</p></div> : products.length ? (
           <section className="product-grid">

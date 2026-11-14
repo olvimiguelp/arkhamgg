@@ -1,12 +1,15 @@
 import { createClient } from "@/lib/supabase/client"
 
 export type PublicCatalogPriceMode = "normal" | "wholesale"
+export type PublicCatalogSource = "products" | "armacen"
 
 type GetOrCreatePublicCatalogShareOptions = {
   ownerAdminId: string
   priceMode: PublicCatalogPriceMode
   businessName: string
   productIds: string[]
+  sourceTable?: PublicCatalogSource
+  categoryFilter?: string
 }
 
 /**
@@ -19,14 +22,24 @@ export async function getOrCreatePublicCatalogShare({
   priceMode,
   businessName,
   productIds,
+  sourceTable = "products",
+  categoryFilter,
 }: GetOrCreatePublicCatalogShareOptions): Promise<string> {
+  const category = sourceTable === "armacen" ? categoryFilter?.trim() : null
+  if (sourceTable === "armacen" && !category) {
+    throw new Error("Selecciona una categoría del almacén.")
+  }
   const supabase = createClient()
-  const { data: existing, error: lookupError } = await supabase
+  let lookup = supabase
     .from("catalog_shares")
     .select("token")
     .eq("owner_admin_id", ownerAdminId)
     .eq("price_mode", priceMode)
+    .eq("source_table", sourceTable)
     .eq("active", true)
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+  lookup = category ? lookup.eq("category_filter", category) : lookup.is("category_filter", null)
+  const { data: existing, error: lookupError } = await lookup
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -40,6 +53,8 @@ export async function getOrCreatePublicCatalogShare({
     owner_admin_id: ownerAdminId,
     product_ids: productIds,
     price_mode: priceMode,
+    source_table: sourceTable,
+    category_filter: category,
     business_name: businessName,
     active: true,
   })
