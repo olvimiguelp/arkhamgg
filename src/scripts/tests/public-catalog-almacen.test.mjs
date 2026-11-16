@@ -54,6 +54,7 @@ try {
   const migration = await readFile(new URL('../070-public-catalog-almacen.sql', import.meta.url), 'utf8')
   await db.exec(migration)
   await db.exec(migration) // The numbered script is safe to reapply.
+  await db.exec(await readFile(new URL('../071-public-catalog-multiple-almacen-categories.sql', import.meta.url), 'utf8'))
   await db.exec(`
     INSERT INTO armacen(id, owner_admin_id, sku, name, category, stock, sell_price, box_number) VALUES
       ('${battery}', '${owner}', '20001', 'Batería A', ' Batería ', 10, 100, '1'),
@@ -78,6 +79,9 @@ try {
   const outOfStockMigration = await readFile(new URL('../074-public-catalog-out-of-stock.sql', import.meta.url), 'utf8')
   await db.exec(outOfStockMigration)
   await db.exec(outOfStockMigration)
+  const searchMigration = await readFile(new URL('../075-public-catalog-word-search.sql', import.meta.url), 'utf8')
+  await db.exec(searchMigration)
+  await db.exec(searchMigration)
 
   const snapshot = async (token, search = null, category = null, offset = 0, limit = 24) =>
     (await db.query('SELECT get_public_catalog_snapshot($1,$2,$3,$4,$5,TRUE) AS data',
@@ -101,6 +105,49 @@ try {
   assert.equal((await snapshot('normal')).products[0].sell_price, 300)
   assert.equal((await snapshot('wholesale')).products[0].sell_price, 250)
   assert.equal((await snapshot('normal')).products[0].name, 'Producto normal')
+
+  // Exercise the real RPCs, including both catalog sources and legacy clients.
+  await db.exec('BEGIN')
+  await db.exec(`
+    UPDATE products SET name = 'iPhone 15 Pro Max', sku = 'APL-15-PM', category = 'Pantallas';
+    UPDATE armacen SET name = 'Pantalla iPhone 15 Pro Max' WHERE id = '${screen}';
+    UPDATE armacen SET name = 'Pantalla iPhone 15 Pro Max', category = 'pantallas' WHERE id = '${foreign}';
+    INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter)
+      VALUES ('combined', '${owner}', 'armacen', 'json:["baterias","pantallas"]');
+  `)
+  for (const token of ['normal', 'wholesale', 'screens', 'combined']) {
+    const expectedId = ['normal', 'wholesale'].includes(token) ? battery : screen
+    for (const query of ['pro max pantalla', 'pro max 15', 'pro 15', '15 pro', '  PRO\t15  ', 'pró 15', 'iphone 15 pro max', 'iph 15']) {
+      const found = await snapshot(token, query)
+      assert.deepEqual(found.products.map(p => p.id), [expectedId], `${token}: ${query}`)
+      const legacyFound = await db.query('SELECT * FROM get_public_catalog_products($1,24,0,$2,NULL)', [token, query])
+      assert.deepEqual(legacyFound.rows.map(p => p.id), [expectedId], `legacy ${token}: ${query}`)
+    }
+    for (const query of ['pro 16', 'samsung pro', '%', '_']) {
+      assert.equal((await snapshot(token, query)).products.length, 0, `${token}: ${query}`)
+    }
+  }
+  assert.equal((await snapshot('normal', 'APL-15')).products.length, 1)
+  assert.equal((await snapshot('normal', 'PM pro')).products.length, 1)
+  assert.equal((await snapshot('batteries', 'bateria')).products.length, 2)
+  assert.equal((await snapshot('screens', 'pro 15', 'baterias')).products.length, 0)
+  assert.equal((await snapshot('normal', ' \t\n ')).products.length, 1)
+  await db.exec(`INSERT INTO products(id, owner_admin_id, sku, name, category, stock, sell_price, wholesale_price)
+    SELECT gen_random_uuid(), '${owner}', 'APL-' || n, 'Pantalla iPhone 15 Pro Max ' || n, 'Pantallas', 1, 100, 80
+    FROM generate_series(1, 30) n`)
+  const searchPage1 = await snapshot('normal', 'pro 15')
+  const searchPage2 = await snapshot('normal', 'pro 15', null, 24)
+  assert.equal(searchPage1.products.length, 24)
+  assert.equal(searchPage1.has_more, true)
+  assert.equal(searchPage2.products.length, 7)
+  assert.equal(searchPage2.has_more, false)
+  assert.equal(new Set([...searchPage1.products, ...searchPage2.products].map(p => p.id)).size, 31)
+  // Anonymous callers can search through the existing token-gated RPC only.
+  await db.exec('SET LOCAL ROLE anon')
+  assert.equal((await snapshot('screens', 'pro 15')).products.length, 1)
+  await db.exec('RESET ROLE')
+  await db.exec('ROLLBACK')
+
   const migratedHistory = (await db.query(
     'SELECT customer_name, customer_phone, catalog_customer_id FROM catalog_order_history WHERE sale_id=$1',
     [historicalSale],
@@ -184,7 +231,7 @@ try {
   await assert.rejects(snapshot('batteries'))
   await assert.rejects(order('batteries', [{ id: battery, quantity: 1 }]))
   await assert.rejects(snapshot('unknown'))
-  console.log('PASS: category isolation, aliases, custom categories, pagination, legacy RPCs, tenant isolation, prices, guest and account orders, history migration, phone validation, rollback, stock and idempotency.')
+  console.log('PASS: unordered word search, accents, mixed name/SKU/category, literal wildcards, search pagination, anonymous RPC, category isolation, aliases, custom categories, legacy RPCs, tenant isolation, prices, guest and account orders, history migration, phone validation, rollback, stock and idempotency.')
 } finally {
   await db.close()
 }

@@ -69,7 +69,7 @@ const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
 const CATALOG_CACHE_TTL_MS = 60 * 1000
 const ORDER_CONFIRMATION_DURATION_MS = 7000
-const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v3:"
+const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v4:"
 const CUSTOMER_SESSION_PREFIX = "arkham:catalog-customer-session:v1:"
 
 function makeCatalogQueryKey(token: string, search: string, category: string) {
