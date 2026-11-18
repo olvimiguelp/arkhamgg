@@ -148,6 +148,8 @@ let whatsappClient;
 let whatsappReady = false;
 let whatsappQr = null;
 let whatsappInitializing = false;
+let whatsappSyncing = false;
+let whatsappProgress = null;
 let whatsappReconnectTimer = null;
 let whatsappInitializationTimer = null;
 let whatsappReconnectAttempt = 0;
@@ -165,7 +167,13 @@ function getDefaultReminderMessageTemplate() {
 }
 
 function getWhatsAppStatus() {
-  return { ready: whatsappReady, qr: whatsappQr, connecting: whatsappInitializing };
+  return {
+    ready: whatsappReady,
+    qr: whatsappQr,
+    connecting: whatsappInitializing,
+    syncing: whatsappSyncing,
+    progress: whatsappProgress,
+  };
 }
 
 function broadcastWhatsAppStatus() {
@@ -215,6 +223,8 @@ function scheduleWhatsAppReconnect(reason) {
   whatsappReady = false;
   whatsappQr = null;
   whatsappInitializing = false;
+  whatsappSyncing = false;
+  whatsappProgress = null;
   const attempt = whatsappReconnectAttempt++;
   const delayMs = Math.min(WHATSAPP_RECONNECT_BASE_MS * 2 ** attempt, WHATSAPP_RECONNECT_MAX_MS);
   console.warn(`[whatsapp] Reconnecting in ${Math.round(delayMs / 1000)}s (${reason || "connection lost"})`);
@@ -229,6 +239,8 @@ function scheduleWhatsAppReconnect(reason) {
 function initWhatsAppClient() {
   if (whatsappClient || whatsappInitializing || appIsQuitting) return;
   whatsappInitializing = true;
+  whatsappSyncing = false;
+  whatsappProgress = null;
   const generation = ++whatsappGeneration;
   broadcastWhatsAppStatus();
 
@@ -252,8 +264,10 @@ function initWhatsAppClient() {
 
   whatsappClient = new Client({
     authStrategy: new LocalAuth({ dataPath: authPath }),
+    authTimeoutMs: 60_000,
     puppeteer: {
       headless: "new",
+      protocolTimeout: 300_000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -276,6 +290,26 @@ function initWhatsAppClient() {
     whatsappInitializing = false;
     whatsappQr = qr;
     whatsappReady = false;
+    whatsappSyncing = false;
+    whatsappProgress = null;
+    broadcastWhatsAppStatus();
+  });
+
+  whatsappClient.on("authenticated", () => {
+    if (generation !== whatsappGeneration) return;
+    whatsappQr = null;
+    whatsappInitializing = false;
+    whatsappSyncing = true;
+    whatsappProgress = null;
+    broadcastWhatsAppStatus();
+  });
+
+  whatsappClient.on("loading_screen", (percent) => {
+    if (generation !== whatsappGeneration) return;
+    const parsedPercent = Number(percent);
+    if (!Number.isFinite(parsedPercent)) return;
+    whatsappSyncing = true;
+    whatsappProgress = Math.min(100, Math.max(0, parsedPercent));
     broadcastWhatsAppStatus();
   });
 
@@ -287,6 +321,8 @@ function initWhatsAppClient() {
     whatsappInitializing = false;
     whatsappReady = true;
     whatsappQr = null;
+    whatsappSyncing = false;
+    whatsappProgress = null;
     broadcastWhatsAppStatus();
   });
 
@@ -335,6 +371,8 @@ async function resetWhatsAppClient() {
   whatsappReady = false;
   whatsappQr = null;
   whatsappInitializing = false;
+  whatsappSyncing = false;
+  whatsappProgress = null;
   broadcastWhatsAppStatus();
 }
 

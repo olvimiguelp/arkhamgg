@@ -39,7 +39,13 @@ function playNotificationTone(audioContext: AudioContext) {
   oscillator.stop(audioContext.currentTime + 0.35)
 }
 
-export function CatalogOrderNotifications({ ownerAdminId }: { ownerAdminId: string }) {
+export function CatalogOrderNotifications({
+  ownerAdminId,
+  showSoundButton,
+}: {
+  ownerAdminId: string
+  showSoundButton: boolean
+}) {
   const navigate = useNavigate()
   const { toast } = useToast()
   const supabase = useMemo(() => createClient(), [])
@@ -173,19 +179,21 @@ export function CatalogOrderNotifications({ ownerAdminId }: { ownerAdminId: stri
 
   return (
     <>
-      <div className="flex justify-end pb-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => void enableNotificationSound()}
-          aria-pressed={soundEnabled}
-        >
-          {hasNewCatalogOrder && <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" />}
-          {soundEnabled ? <Volume2 /> : <VolumeX />}
-          {soundEnabled ? "Probar sonido" : "Activar sonido"}
-        </Button>
-      </div>
+      {showSoundButton && (
+        <div className="flex justify-end pb-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => void enableNotificationSound()}
+            aria-pressed={soundEnabled}
+          >
+            {hasNewCatalogOrder && <span className="h-2 w-2 animate-pulse rounded-full bg-red-600" />}
+            {soundEnabled ? <Volume2 /> : <VolumeX />}
+            {soundEnabled ? "Probar sonido" : "Activar sonido"}
+          </Button>
+        </div>
+      )}
       <Dialog
         open={Boolean(catalogOrderAlert)}
         onOpenChange={(open) => {

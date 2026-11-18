@@ -3,3 +3,5 @@ dist/
 *.tsbuildinfo
 release/
 *.asar
+**/.wwebjs_auth/
+**/.wwebjs_cache/

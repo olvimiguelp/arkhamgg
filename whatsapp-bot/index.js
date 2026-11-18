@@ -17,6 +17,8 @@ const REMINDER_MESSAGE_TEMPLATE =
   DEFAULT_REMINDER_MESSAGE_TEMPLATE
 const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS || "60", 10)
 const REMINDER_DELAY_MS = Number.parseInt(process.env.REMINDER_DELAY_MS || "1200", 10)
+const MAX_SEND_ATTEMPTS = 2
+const SEND_RETRY_DELAY_MS = 1000
 const DRY_RUN = process.env.DRY_RUN === "true"
 const CHROME_EXECUTABLE_PATH =
   process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
@@ -42,6 +44,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const runOnce = process.argv.includes("--once")
 let isRunning = false
 let isClientReady = false
+let isClientConnecting = true
+let isClientSyncing = false
+let loadingProgress = null
 let qrCode = null
 let lastError = null
 
@@ -162,49 +167,51 @@ async function fetchDueCustomers() {
   })
 }
 
-async function sendReminder(client, customer) {
-  const normalized = normalizePhone(customer.phone)
-  if (!normalized) {
-    return { ok: false, reason: "missing_phone" }
-  }
-
-  const numberId = await client.getNumberId(normalized)
-  if (!numberId) {
-    return { ok: false, reason: "not_on_whatsapp", normalized }
-  }
-
-  const chatId = numberId._serialized || `${normalized}@c.us`
-  const message = buildMessage(customer)
-
-  if (DRY_RUN) {
-    console.log("[DRY_RUN]", chatId, message)
-    return { ok: true }
-  }
-
-  await client.sendMessage(chatId, message)
-  return { ok: true }
-}
-
-async function sendRawMessage(client, phone, message) {
+async function sendToPhone(client, phone, message) {
   const normalized = normalizePhone(phone)
   if (!normalized) {
     return { ok: false, reason: "missing_phone" }
   }
 
-  const numberId = await client.getNumberId(normalized)
-  if (!numberId) {
-    return { ok: false, reason: "not_on_whatsapp", normalized }
+  for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
+    try {
+      const numberId = await client.getNumberId(normalized)
+      if (!numberId) {
+        return { ok: false, reason: "not_on_whatsapp", normalized }
+      }
+
+      const chatId = numberId._serialized || `${normalized}@c.us`
+      if (DRY_RUN) {
+        console.log("[DRY_RUN]", chatId, message)
+        return { ok: true, attempts: attempt }
+      }
+
+      await client.sendMessage(chatId, message)
+      return { ok: true, attempts: attempt }
+    } catch (error) {
+      if (attempt === MAX_SEND_ATTEMPTS) {
+        return {
+          ok: false,
+          reason: "send_failed",
+          attempts: attempt,
+          error: error?.message || String(error),
+        }
+      }
+
+      console.warn(`Send attempt ${attempt}/${MAX_SEND_ATTEMPTS} failed; retrying:`, error?.message || error)
+      await sleep(SEND_RETRY_DELAY_MS)
+    }
   }
 
-  const chatId = numberId._serialized || `${normalized}@c.us`
+  return { ok: false, reason: "send_failed", attempts: MAX_SEND_ATTEMPTS }
+}
 
-  if (DRY_RUN) {
-    console.log("[DRY_RUN]", chatId, message)
-    return { ok: true }
-  }
+async function sendReminder(client, customer) {
+  return sendToPhone(client, customer.phone, buildMessage(customer))
+}
 
-  await client.sendMessage(chatId, message)
-  return { ok: true }
+async function sendRawMessage(client, phone, message) {
+  return sendToPhone(client, phone, message)
 }
 
 async function processOnce(client) {
@@ -229,6 +236,8 @@ async function processOnce(client) {
         } else {
           if (result.reason === "not_on_whatsapp") {
             console.warn("Skipped:", customer.id, result.reason, result.normalized || "")
+          } else if (result.reason === "send_failed") {
+            console.warn("Skipped:", customer.id, result.reason, `after ${result.attempts} attempts`, result.error || "")
           } else {
             console.warn("Skipped:", customer.id, result.reason)
           }
@@ -272,9 +281,14 @@ function killOrphanedChromeProcesses() {
 killOrphanedChromeProcesses()
 
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: path.join(__dirname, ".wwebjs_auth") }),
+  authStrategy: new LocalAuth({
+    clientId: "arkham-reminder-bot-v2",
+    dataPath: path.join(__dirname, ".wwebjs_auth"),
+  }),
+  authTimeoutMs: 60_000,
   puppeteer: {
     headless: true,
+    protocolTimeout: 300_000,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
     ...(CHROME_EXECUTABLE_PATH ? { executablePath: CHROME_EXECUTABLE_PATH } : {}),
   },
@@ -285,12 +299,34 @@ client.on("qr", (qr) => {
   qrcode.generate(qr, { small: true })
   qrCode = qr
   isClientReady = false
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
   lastError = null
+})
+
+client.on("authenticated", () => {
+  isClientConnecting = false
+  isClientSyncing = true
+  loadingProgress = null
+  qrCode = null
+  lastError = null
+})
+
+client.on("loading_screen", (percent) => {
+  const parsedPercent = Number(percent)
+  if (!Number.isFinite(parsedPercent)) return
+  isClientConnecting = false
+  isClientSyncing = true
+  loadingProgress = Math.min(100, Math.max(0, parsedPercent))
 })
 
 client.on("ready", async () => {
   console.log("WhatsApp client ready.")
   isClientReady = true
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
   qrCode = null
   lastError = null
 
@@ -309,6 +345,9 @@ client.on("ready", async () => {
 client.on("auth_failure", (message) => {
   console.error("Auth failure:", message)
   isClientReady = false
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
   qrCode = null
   lastError = message
 })
@@ -316,12 +355,19 @@ client.on("auth_failure", (message) => {
 client.on("disconnected", (reason) => {
   console.error("Disconnected:", reason)
   isClientReady = false
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
   qrCode = null
   lastError = reason
 })
 
 client.initialize().catch((err) => {
   console.error("Initialization error:", err)
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
+  qrCode = null
   lastError = err?.message || String(err)
 })
 
@@ -363,7 +409,15 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && pathname === WEBHOOK_HEALTH_PATH) {
-    writeJson(res, 200, { ok: true, ready: isClientReady, qr: qrCode, error: lastError })
+    writeJson(res, 200, {
+      ok: true,
+      ready: isClientReady,
+      connecting: isClientConnecting,
+      qr: qrCode,
+      syncing: isClientSyncing,
+      progress: loadingProgress,
+      error: lastError,
+    })
     return
   }
 

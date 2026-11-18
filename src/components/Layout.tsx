@@ -120,7 +120,12 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
         <Header />
         <div className="flex-1 overflow-auto p-2 pt-16 md:p-[1%] md:pt-20">
           <AppUpdateCard />
-          {catalogOrdersOwnerId && <CatalogOrderNotifications ownerAdminId={catalogOrdersOwnerId} />}
+          {catalogOrdersOwnerId && (
+            <CatalogOrderNotifications
+              ownerAdminId={catalogOrdersOwnerId}
+              showSoundButton={pathname === "/empleados"}
+            />
+          )}
           {tenantAdminId && <TenantSubscriptionNotifications ownerAdminId={tenantAdminId} />}
           {subscriptionStatus?.showRenewalPrompt && (
             <SubscriptionRenewalBanner status={subscriptionStatus} />

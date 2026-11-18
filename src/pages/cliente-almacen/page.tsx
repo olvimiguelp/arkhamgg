@@ -19,6 +19,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import {
   Dialog,
@@ -526,10 +527,20 @@ export default function CustomersPage() {
   const [isConfirmRemindersOpen, setIsConfirmRemindersOpen] = useState(false)
   const [sendScope, setSendScope] = useState<"selected" | "all">("selected")
   const [isWhatsappDialogOpen, setIsWhatsappDialogOpen] = useState(false)
-  const [whatsappStatus, setWhatsappStatus] = useState<{ ready: boolean; qr: string | null; connecting?: boolean }>({
+  const [whatsappStatus, setWhatsappStatus] = useState<{
+    ready: boolean
+    qr: string | null
+    connecting?: boolean
+    syncing?: boolean
+    progress?: number | null
+    error?: string | null
+  }>({
     ready: false,
     qr: null,
     connecting: false,
+    syncing: false,
+    progress: null,
+    error: null,
   })
   const [whatsappQrDataUrl, setWhatsappQrDataUrl] = useState<string>("")
   const [isWhatsappConnecting, setIsWhatsappConnecting] = useState(false)
@@ -1245,13 +1256,6 @@ export default function CustomersPage() {
       }
     } else {
       let active = true
-      const envLocalWebhook = (import.meta as any).env?.VITE_REMINDER_LOCAL_WEBHOOK_URL
-      if (!envLocalWebhook) {
-        console.debug("[whatsapp] local webhook not configured; skipping health poll")
-        setWhatsappStatus({ ready: false, qr: null })
-        return undefined
-      }
-
       const poll = async () => {
         try {
           const localWebhookUrl = getLocalWebhookUrl()
@@ -1262,11 +1266,12 @@ export default function CustomersPage() {
             if (active) {
               setWhatsappStatus({
                 ready: data.ready,
-                qr: data.qr || null
+                qr: data.qr || null,
+                connecting: data.connecting || false,
+                syncing: data.syncing || false,
+                progress: data.progress ?? null,
+                error: data.error || null,
               })
-              if (data.error) {
-                toast.error(`Error en servidor WhatsApp: ${data.error}`)
-              }
             }
           } else {
             if (active) {
@@ -1483,7 +1488,11 @@ export default function CustomersPage() {
             const data = await res.json()
             setWhatsappStatus({
               ready: data.ready,
-              qr: data.qr || null
+              qr: data.qr || null,
+              connecting: data.connecting || false,
+              syncing: data.syncing || false,
+              progress: data.progress ?? null,
+              error: data.error || null,
             })
             if (data.ready) {
               toast.success("WhatsApp ya está listo.")
@@ -4027,11 +4036,15 @@ export default function CustomersPage() {
                   <span className="inline-flex">
                     <Button
                       onClick={handleConnectWhatsapp}
-                      disabled={whatsappBotDisabled || isWhatsappConnecting || whatsappStatus.connecting}
+                      disabled={whatsappBotDisabled || isWhatsappConnecting || whatsappStatus.connecting || whatsappStatus.syncing}
                       className="gap-2"
                     >
-                      {(isWhatsappConnecting || whatsappStatus.connecting) && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {isWhatsappConnecting || whatsappStatus.connecting ? "Conectando..." : "Conectar WhatsApp"}
+                      {(isWhatsappConnecting || whatsappStatus.connecting || whatsappStatus.syncing) && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {whatsappStatus.syncing
+                        ? "Sincronizando..."
+                        : isWhatsappConnecting || whatsappStatus.connecting
+                          ? "Conectando..."
+                          : "Conectar WhatsApp"}
                     </Button>
                   </span>
                 </TooltipTrigger>
@@ -4040,15 +4053,33 @@ export default function CustomersPage() {
             )}
             {whatsappStatus.ready ? (
               <div className="text-sm text-emerald-600 font-medium">WhatsApp conectado.</div>
+            ) : whatsappStatus.syncing ? (
+              <div className="w-full space-y-2 text-center">
+                <div className="text-sm text-muted-foreground">Sincronizando datos de WhatsApp...</div>
+                <Progress
+                  aria-label="Progreso de sincronización de WhatsApp"
+                  value={whatsappStatus.progress ?? undefined}
+                  indeterminate={whatsappStatus.progress == null}
+                />
+                {whatsappStatus.progress != null && (
+                  <div className="text-xs text-muted-foreground">{Math.round(whatsappStatus.progress)}%</div>
+                )}
+              </div>
             ) : whatsappQrDataUrl ? (
               <>
                 <img src={whatsappQrDataUrl} alt="QR WhatsApp" className="h-56 w-56 rounded-md border" />
                 <div className="text-xs text-muted-foreground">El codigo se actualiza automaticamente.</div>
               </>
+            ) : whatsappStatus.error ? (
+              <div className="w-full space-y-2 text-center">
+                <div className="text-sm text-destructive">No se pudo iniciar WhatsApp.</div>
+                <div className="text-xs text-muted-foreground">{whatsappStatus.error}</div>
+                <div className="text-xs text-muted-foreground">Reinicia el bot desde la terminal y vuelve a conectar.</div>
+              </div>
             ) : isWhatsappConnecting || whatsappStatus.connecting ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Generando QR...
+              <div className="w-full space-y-2 text-center">
+                <div className="text-sm text-muted-foreground">Conectando con WhatsApp...</div>
+                <Progress aria-label="Conectando con WhatsApp" indeterminate />
               </div>
             ) : (
               <div className="text-xs text-muted-foreground">Haz clic en Conectar WhatsApp para generar el QR.</div>
