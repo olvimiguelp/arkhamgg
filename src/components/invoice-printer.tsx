@@ -1007,13 +1007,6 @@ export interface AlmacenClosingTicketData {
   closingNumber: string
   date: string
   cashierName: string
-  totalProducts: number
-  totalUnitsExpected: number
-  totalUnitsCounted: number
-  discrepancyUnits: number
-  totalCostExpected: number
-  totalCostCounted: number
-  discrepancyCost: number
   notes?: string
   financialSummary?: {
     totalSales: number
@@ -1062,7 +1055,7 @@ export async function printAlmacenClosingTicket(
     <body>
       <div class="ticket">
         ${getBrandingTicketHeaderHtml(branding)}
-        <div class="center small bold">CIERRE DE ALMACEN</div>
+        <div class="center small bold">CIERRE FINANCIERO DEL ALMACEN</div>
 
         <div class="line">${DIVIDER}</div>
 
@@ -1070,18 +1063,8 @@ export async function printAlmacenClosingTicket(
         <div class="flex-row small"><span class="bold">FECHA:</span> <span>${data.date}</span></div>
         <div class="flex-row small"><span class="bold">RESPONSABLE:</span> <span>${data.cashierName.substring(0, 20)}</span></div>
 
-        <div class="section-title">RESUMEN</div>
-        <div class="flex-row small"><span>Productos:</span> <span>${data.totalProducts}</span></div>
-        <div class="flex-row small"><span>Unid. esperadas:</span> <span>${data.totalUnitsExpected}</span></div>
-        <div class="flex-row small"><span>Unid. contadas:</span> <span>${data.totalUnitsCounted}</span></div>
-        <div class="flex-row small bold"><span>Diferencia unid.:</span> <span>${data.discrepancyUnits}</span></div>
-        <div class="line">${DIVIDER_LIGHT}</div>
-        <div class="flex-row small"><span>Costo esperado:</span> <span>$${formatCurrency(data.totalCostExpected)}</span></div>
-        <div class="flex-row small"><span>Costo contado:</span> <span>$${formatCurrency(data.totalCostCounted)}</span></div>
-        <div class="flex-row bold"><span>Diferencia costo:</span> <span>$${formatCurrency(data.discrepancyCost)}</span></div>
-
         ${data.financialSummary ? `
-          <div class="section-title">CIERRE INFORMADO</div>
+          <div class="section-title">CIERRE FINANCIERO DEL ALMACEN</div>
           <div class="flex-row small"><span>Total Facturado:</span> <span>$${formatCurrency(data.financialSummary.totalSales)}</span></div>
           <div class="flex-row small"><span>Facturas:</span> <span>${data.financialSummary.invoiceCount}</span></div>
           <div class="flex-row small"><span>En Efectivo:</span> <span>$${formatCurrency(data.financialSummary.cashNet)}</span></div>
@@ -1092,12 +1075,10 @@ export async function printAlmacenClosingTicket(
           <div class="flex-row small"><span>Abonos Deuda (Efectivo):</span> <span>$${formatCurrency(data.financialSummary.cashDebtPayments)}</span></div>
           <div class="line">${DIVIDER_LIGHT}</div>
           <div class="flex-row bold"><span>Ventas Netas de Almacen:</span> <span>$${formatCurrency(data.financialSummary.netIncome)}</span></div>
-        ` : ""}
-
-        <div class="section-title">ESTADO</div>
-        <div class="center small" style="margin-top: 1mm;">
-          ${data.discrepancyUnits === 0 && data.discrepancyCost === 0 ? "CUADRE PERFECTO" : "REQUIERE REVISION"}
-        </div>
+        ` : `
+          <div class="section-title">CIERRE FINANCIERO DEL ALMACEN</div>
+          <div class="center small">Resumen financiero no disponible para este cierre.</div>
+        `}
 
         ${data.notes ? `<div class="note-box"><div class="bold">Notas:</div><div>${data.notes}</div></div>` : ""}
 

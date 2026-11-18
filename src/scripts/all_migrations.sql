@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-11-16 12:03:26 -04:00
+-- Generado: 2026-11-18 02:48:58 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -4934,10 +4934,17 @@ BEGIN
 END;
 $$;
 
+-- ====================================================
+-- Source: 076-add-financial-summary-to-almacen-closings.sql
+-- ====================================================
+
+ALTER TABLE public.almacen_closings
+  ADD COLUMN IF NOT EXISTS financial_summary JSONB;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (78):
+-- Archivos concatenados (79):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -5016,3 +5023,4 @@ $$;
 --   - 073-catalog-customer-accounts.sql
 --   - 074-public-catalog-out-of-stock.sql
 --   - 075-public-catalog-word-search.sql
+--   - 076-add-financial-summary-to-almacen-closings.sql

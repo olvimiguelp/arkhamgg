@@ -25,22 +25,20 @@ export interface AlmacenClosingFinancialSummary {
   returnsCount: number
   netIncome: number
   cashDebtPayments: number
+  openingBalance?: number
+  countedAmount?: number
+  discrepancy?: number
 }
 
 export interface AlmacenClosingPDFData {
   date: string
   closingNumber: string
   cashier: string
-  totalProducts: number
-  totalUnitsExpected: number
-  totalUnitsCounted: number
-  discrepancyUnits: number
-  totalCostExpected: number
-  totalCostCounted: number
-  discrepancyCost: number
   notes?: string
-  snapshot: AlmacenClosingSnapshotItem[]
   financialSummary?: AlmacenClosingFinancialSummary
+  transactions?: {
+    invoices: Array<{ number: string; method: string; total: number }>
+  }
 }
 
 const formatAmount = (value: number) => Number(value || 0).toFixed(2)
@@ -55,9 +53,12 @@ export async function generateAlmacenClosingPDF(
   const margin = 2.83
   const contentWidth = pageWidth - margin * 2
 
-  let estimatedHeight = 420 + data.snapshot.length * 8
+  let estimatedHeight = 250
   if (data.financialSummary) {
     estimatedHeight += 120
+  }
+  if (data.transactions) {
+    estimatedHeight += data.transactions.invoices.length * 8
   }
   if (data.notes) {
     estimatedHeight += 40
@@ -92,7 +93,7 @@ export async function generateAlmacenClosingPDF(
 
   y = drawBrandingClosingHeaderPdf(doc, branding, {
     pageWidth,
-    headerTitle: "CIERRE DE ALMACEN",
+    headerTitle: "CIERRE DE CAJA",
   }) - 5
 
   doc.setFillColor(248, 250, 252)
@@ -110,92 +111,133 @@ export async function generateAlmacenClosingPDF(
   y += 12
 
   if (data.financialSummary) {
-    doc.setFillColor(16, 185, 129)
+    const summary = data.financialSummary
+
+    doc.setFillColor(34, 197, 94)
     doc.rect(margin, y - 3, contentWidth, 14, "F")
     doc.setTextColor(255, 255, 255)
     doc.setFontSize(10)
     doc.setFont("courier", "bold")
-    doc.text("RESUMEN CIERRE ALMACEN", centerX, y + 7, { align: "center" })
+    doc.text("RESUMEN DE VENTAS", centerX, y + 7, { align: "center" })
     doc.setTextColor(0, 0, 0)
     y += 18
 
-    drawRow("Total Facturado:", `$${formatAmount(data.financialSummary.totalSales)}`, y, 9)
+    drawRow("Efectivo:", `$${formatAmount(summary.cashNet)}`, y, 9)
     y += 11
-    drawRow("Facturas:", String(data.financialSummary.invoiceCount), y, 9)
+    drawRow("Tarjeta:", `$${formatAmount(summary.cardNet)}`, y, 9)
     y += 11
-    drawRow("En Efectivo:", `$${formatAmount(data.financialSummary.cashNet)}`, y, 9)
+    drawRow("Transferencia:", `$${formatAmount(summary.transferNet)}`, y, 9)
     y += 11
-    drawRow("En Tarjeta:", `$${formatAmount(data.financialSummary.cardNet)}`, y, 9)
-    y += 11
-    drawRow("Transferencias:", `$${formatAmount(data.financialSummary.transferNet)}`, y, 9)
-    y += 11
-    drawRow("A Credito:", `$${formatAmount(data.financialSummary.creditNet)}`, y, 9)
-    y += 11
-    drawRow("Devoluciones:", `-$${formatAmount(data.financialSummary.totalReturns)}`, y, 9)
-    y += 11
-    drawRow("Abonos Deuda (Efectivo):", `$${formatAmount(data.financialSummary.cashDebtPayments)}`, y, 9)
+    drawRow("Crédito:", `$${formatAmount(summary.creditNet)}`, y, 9)
     y += 13
     drawLine(y - 3, true)
-    drawRow("Ventas Netas de Almacen:", `$${formatAmount(data.financialSummary.netIncome)}`, y + 5, 10, true)
-    y += 16
-  }
+    drawRow(`TOTAL VENTAS (${summary.invoiceCount})`, `$${formatAmount(summary.totalSales)}`, y + 5, 10, true)
+    y += 15
 
-  doc.setFillColor(59, 130, 246)
-  doc.rect(margin, y - 3, contentWidth, 14, "F")
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(10)
-  doc.setFont("courier", "bold")
-  doc.text("RESUMEN DE INVENTARIO", centerX, y + 7, { align: "center" })
-  doc.setTextColor(0, 0, 0)
-  y += 18
+    doc.setFillColor(239, 68, 68)
+    doc.rect(margin, y, contentWidth, 14, "F")
+    doc.setTextColor(255, 255, 255)
+    doc.setFont("courier", "bold")
+    doc.text("DEVOLUCIONES", centerX, y + 10, { align: "center" })
+    doc.setTextColor(0, 0, 0)
+    y += 22
+    drawRow(`Total Devoluciones (${summary.returnsCount})`, `-$${formatAmount(summary.totalReturns)}`, y, 9)
+    y += 15
 
-  drawRow("Productos:", String(data.totalProducts), y, 9)
-  y += 11
-  drawRow("Unidades esperadas:", String(data.totalUnitsExpected), y, 9)
-  y += 11
-  drawRow("Unidades contadas:", String(data.totalUnitsCounted), y, 9)
-  y += 11
-  drawRow("Diferencia unidades:", String(data.discrepancyUnits), y, 9, true)
-  y += 13
-  drawLine(y - 3, true)
-  drawRow("Costo esperado:", `$${formatAmount(data.totalCostExpected)}`, y + 5, 10, true)
-  y += 11
-  drawRow("Costo contado:", `$${formatAmount(data.totalCostCounted)}`, y + 5, 10, true)
-  y += 11
-  drawRow("Diferencia costo:", `$${formatAmount(data.discrepancyCost)}`, y + 5, 10, true)
-  y += 16
+    doc.setFillColor(59, 130, 246)
+    doc.rect(margin, y, contentWidth, 14, "F")
+    doc.setTextColor(255, 255, 255)
+    doc.setFont("courier", "bold")
+    doc.text("PAGOS DE DEUDA", centerX, y + 10, { align: "center" })
+    doc.setTextColor(0, 0, 0)
+    y += 22
+    drawRow("Total Pagos (0)", `+$${formatAmount(summary.cashDebtPayments)}`, y, 9)
+    y += 15
 
-  drawLine(y, false)
-  y += 8
-  doc.setFontSize(9)
-  doc.setFont("courier", "bold")
-  doc.text("DETALLE POR PRODUCTO", centerX, y, { align: "center" })
-  y += 10
+    doc.setFillColor(168, 85, 247)
+    doc.rect(margin, y, contentWidth, 14, "F")
+    doc.setTextColor(255, 255, 255)
+    doc.setFont("courier", "bold")
+    doc.text("REPARACIONES", centerX, y + 10, { align: "center" })
+    doc.setTextColor(0, 0, 0)
+    y += 22
+    drawRow("Total Reparaciones (0)", "$0.00", y, 9)
+    y += 18
 
-  doc.setFontSize(7)
-  doc.setFont("courier", "bold")
-  doc.text("ID", margin + 2, y)
-  doc.text("ESP", margin + 86, y, { align: "right" })
-  doc.text("CONT", margin + 122, y, { align: "right" })
-  doc.text("DIF", margin + 154, y, { align: "right" })
-  doc.text("COSTO DIF", pageWidth - margin - 2, y, { align: "right" })
-  y += 8
-  doc.setFont("courier", "normal")
+    drawLine(y, false)
+    y += 5
+    doc.setFillColor(15, 23, 42)
+    doc.rect(margin, y, contentWidth, 16, "F")
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(11)
+    doc.setFont("courier", "bold")
+    doc.text("CUADRE DE CAJA", centerX, y + 11, { align: "center" })
+    doc.setTextColor(0, 0, 0)
+    y += 24
 
-  data.snapshot.slice(0, 90).forEach((item) => {
-    const itemCode = (item.sku || "").trim() || item.productId.slice(0, 8)
-    doc.text(itemCode, margin + 2, y)
-    doc.text(String(item.expectedStock), margin + 86, y, { align: "right" })
-    doc.text(String(item.countedStock), margin + 122, y, { align: "right" })
-    doc.text(String(item.discrepancyUnits), margin + 154, y, { align: "right" })
-    doc.text(`$${formatAmount(item.discrepancyCost)}`, pageWidth - margin - 2, y, { align: "right" })
-    y += 8
-  })
+    const openingBalance = summary.openingBalance
+    const countedAmount = summary.countedAmount
+    const expectedAmount = openingBalance === undefined ? undefined : openingBalance + summary.cashNet
+    const discrepancy =
+      summary.discrepancy ??
+      (expectedAmount !== undefined && countedAmount !== undefined ? expectedAmount - countedAmount : undefined)
 
-  if (data.snapshot.length > 90) {
+    drawRow("Saldo Inicial:", openingBalance === undefined ? "No registrado" : `$${formatAmount(openingBalance)}`, y, 9)
+    y += 12
+    drawRow("Monto Esperado:", expectedAmount === undefined ? "No registrado" : `$${formatAmount(expectedAmount)}`, y, 10, true)
+    y += 12
+    drawRow("Monto Contado:", countedAmount === undefined ? "No registrado" : `$${formatAmount(countedAmount)}`, y, 10, true)
+    y += 14
+
+    const discrepancyColor =
+      discrepancy === undefined
+        ? { bg: [100, 116, 139], text: [255, 255, 255] }
+        : discrepancy === 0
+        ? { bg: [34, 197, 94], text: [255, 255, 255] }
+        : discrepancy > 0
+          ? { bg: [239, 68, 68], text: [255, 255, 255] }
+          : { bg: [249, 115, 22], text: [255, 255, 255] }
+    doc.setFillColor(discrepancyColor.bg[0], discrepancyColor.bg[1], discrepancyColor.bg[2])
+    doc.rect(margin, y - 3, contentWidth, 18, "F")
+    doc.setTextColor(discrepancyColor.text[0], discrepancyColor.text[1], discrepancyColor.text[2])
+    doc.setFontSize(11)
+    doc.setFont("helvetica", "bold")
+    const discrepancyText =
+      discrepancy === undefined
+        ? "CUADRE NO REGISTRADO"
+        : discrepancy === 0
+        ? "CUADRADO"
+        : discrepancy > 0
+          ? `FALTANTE: $${formatAmount(discrepancy)}`
+          : `SOBRANTE: $${formatAmount(Math.abs(discrepancy))}`
+    doc.text(discrepancyText, centerX, y + 9, { align: "center" })
+    doc.setTextColor(0, 0, 0)
+    y += 25
+
+    if (data.transactions && data.transactions.invoices.length > 0) {
+      drawLine(y, true)
+      y += 8
+      doc.setFontSize(9)
+      doc.setFont("courier", "bold")
+      doc.text("DETALLE DE FACTURAS", centerX, y, { align: "center" })
+      y += 10
+      doc.setFontSize(8)
+      doc.setFont("courier", "bold")
+      doc.text("ID FACTURA", margin + 2, y)
+      doc.text("TOTAL", pageWidth - margin - 2, y, { align: "right" })
+      y += 8
+      doc.setFont("courier", "normal")
+      data.transactions.invoices.slice(0, 50).forEach((invoice) => {
+        doc.text(invoice.number, margin + 2, y)
+        doc.text(`$${formatAmount(invoice.total)}`, pageWidth - margin - 2, y, { align: "right" })
+        y += 8
+      })
+    }
+  } else {
     doc.setFont("courier", "italic")
-    doc.text(`... y ${data.snapshot.length - 90} productos mas`, centerX, y, { align: "center" })
-    y += 8
+    doc.setFontSize(8)
+    doc.text("Resumen financiero no disponible para este cierre.", centerX, y, { align: "center" })
+    y += 12
   }
 
   if (data.notes) {

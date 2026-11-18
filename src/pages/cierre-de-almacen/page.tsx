@@ -97,6 +97,7 @@ interface AlmacenClosing {
   status: string
   notes?: string
   snapshot: AlmacenClosingSnapshotItem[] | string | null
+  financial_summary?: AlmacenClosingFinancialSummary | null
   created_at: string
 }
 
@@ -120,6 +121,9 @@ const COLORS = {
   transfer: "#8b5cf6",
   credit: "#f59e0b",
 }
+
+const formatLocalDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 
 const parseCountedStockValue = (value: string | undefined, fallback: number) => {
   if (value === undefined || value === "") return Math.max(0, fallback)
@@ -244,6 +248,32 @@ const isAlmacenItemRecord = (
   return false
 }
 
+const getAlmacenRatioFromSale = (sale: Sale, almacenProductIds: Set<string>) => {
+  const saleItems = Array.isArray(sale.items) ? sale.items : []
+  if (saleItems.length === 0) return 0
+
+  let itemsTotal = 0
+  let almacenTotal = 0
+  let almacenCount = 0
+  let nonAlmacenCount = 0
+
+  saleItems.forEach((rawItem) => {
+    const item = rawItem as unknown as Record<string, unknown>
+    const subtotal = getItemSubtotal(item)
+    itemsTotal += subtotal
+
+    if (isAlmacenItemRecord(item, almacenProductIds)) {
+      almacenTotal += subtotal
+      almacenCount += 1
+    } else {
+      nonAlmacenCount += 1
+    }
+  })
+
+  if (itemsTotal > 0) return Math.max(0, Math.min(1, almacenTotal / itemsTotal))
+  return almacenCount > 0 && nonAlmacenCount === 0 ? 1 : 0
+}
+
 const calculateSaleMethodBreakdown = (sale: Sale): MethodBreakdown => {
   const totals = createEmptyMethodBreakdown()
   const saleTotal = normalizePositiveAmount(sale.total)
@@ -307,11 +337,11 @@ const isMissingTableError = (error: unknown) => {
 }
 
 export default function AlmacenClosingPage() {
-  const { products, sales, returns, payments, repairs, expenses, currentUser, employees, refreshData, customers } = useStore()
+  const { products, sales, returns, payments, repairs, expenses, currentUser, employees, customers } = useStore()
   const { toast } = useToast()
   const supabase = createClient()
 
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split("T")[0])
+  const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()))
   const [showClosingDialog, setShowClosingDialog] = useState(false)
   const [closingNotes, setClosingNotes] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
@@ -729,6 +759,14 @@ export default function AlmacenClosingPage() {
   )
 
   const netCashInFlow = paymentMethodTotals.cash.sales + paymentMethodTotals.cash.payments - paymentMethodTotals.cash.returns
+  const conteoExpectedAmount =
+    (Number(openingBalance) || 0) +
+    paymentMethodTotals.cash.sales +
+    paymentMethodTotals.cash.payments -
+    paymentMethodTotals.cash.returns
+  const countedAmount = Number(manualCountedAmount) || 0
+  const conteoDiscrepancy = conteoExpectedAmount - countedAmount
+
   const closingFinancialSummary = useMemo<AlmacenClosingFinancialSummary>(
     () => ({
       totalSales: paymentSummary.totalSales,
@@ -742,16 +780,12 @@ export default function AlmacenClosingPage() {
       returnsCount: dayReturns.length,
       netIncome: paymentSummary.netIncome,
       cashDebtPayments: paymentMethodTotals.cash.payments,
+      openingBalance: Number(openingBalance) || 0,
+      countedAmount,
+      discrepancy: conteoDiscrepancy,
     }),
-    [dayReturns.length, daySales.length, netCashInFlow, paymentMethodTotals, paymentSummary],
+    [countedAmount, conteoDiscrepancy, dayReturns.length, daySales.length, netCashInFlow, openingBalance, paymentMethodTotals, paymentSummary],
   )
-  const conteoExpectedAmount =
-    (Number(openingBalance) || 0) +
-    paymentMethodTotals.cash.sales +
-    paymentMethodTotals.cash.payments -
-    paymentMethodTotals.cash.returns
-  const countedAmount = Number(manualCountedAmount) || 0
-  const conteoDiscrepancy = conteoExpectedAmount - countedAmount
 
   const pieChartData = [
     { name: "Efectivo", value: paymentMethodTotals.cash.sales, color: COLORS.cash },
@@ -780,16 +814,15 @@ export default function AlmacenClosingPage() {
 
   const loadAlmacenDebtPayments = useCallback(async () => {
     try {
-      const [{ data, error }, { data: creditSalesData, error: creditSalesError }] = await Promise.all([
-        supabase
-          .from("almacen_payments")
-          .select("*")
-          .order("date", { ascending: false }),
-        supabase
-          .from("almacen_credit_sales")
-          .select("id, customer_account_id, invoice_number, date")
-          .order("date", { ascending: false }),
-      ])
+      const start = new Date(`${selectedDate}T00:00:00`)
+      const end = new Date(start)
+      end.setDate(end.getDate() + 1)
+      const { data, error } = await supabase
+        .from("almacen_payments")
+        .select("*")
+        .gte("date", start.toISOString())
+        .lt("date", end.toISOString())
+        .order("date", { ascending: false })
 
       if (error) {
         if (!isMissingTableError(error)) {
@@ -799,59 +832,54 @@ export default function AlmacenClosingPage() {
         return
       }
 
+      const paymentRows = (data || []) as Record<string, unknown>[]
+      const customerAccountIds = [...new Set(
+        paymentRows
+          .map((row) => row.customer_account_id ? String(row.customer_account_id) : "")
+          .filter(Boolean),
+      )]
+      const { data: creditSalesData, error: creditSalesError } = customerAccountIds.length
+        ? await supabase
+            .from("almacen_credit_sales")
+            .select("id, customer_account_id, invoice_number, date")
+            .in("customer_account_id", customerAccountIds)
+            .lt("date", end.toISOString())
+            .order("date", { ascending: false })
+        : { data: [], error: null }
+
       if (creditSalesError && !isMissingTableError(creditSalesError)) {
         console.error("Error loading almacen credit sales:", creditSalesError)
       }
 
       const creditSalesById = new Map<string, string>()
       const creditSalesByCustomer = new Map<string, Array<{ date: string; invoice_number: string }>>()
-
       ;(creditSalesData || []).forEach((creditSale) => {
         const row = creditSale as Record<string, unknown>
         const creditSaleId = String(row.id || "")
         const customerAccountId = row.customer_account_id ? String(row.customer_account_id) : ""
         const invoiceNumber = String(row.invoice_number || "")
-        const date = String(row.date || "")
-
         if (!invoiceNumber) return
         if (creditSaleId) creditSalesById.set(creditSaleId, invoiceNumber)
-
         if (customerAccountId) {
-          const list = creditSalesByCustomer.get(customerAccountId) || []
-          list.push({ date, invoice_number: invoiceNumber })
-          creditSalesByCustomer.set(customerAccountId, list)
+          const customerSales = creditSalesByCustomer.get(customerAccountId) || []
+          customerSales.push({ date: String(row.date || ""), invoice_number: invoiceNumber })
+          creditSalesByCustomer.set(customerAccountId, customerSales)
         }
       })
 
-      const filteredBySelectedDate = filterByDate(
-        (data || []).map((payment) => {
-          const row = payment as Record<string, unknown>
-          return {
-            ...row,
-            __effectiveDate: row.date ?? row.created_at ?? null,
-          }
-        }),
-        "__effectiveDate",
-      )
-
       setAlmacenDebtPayments(
-        filteredBySelectedDate.map((payment) => {
-          const row = payment as Record<string, unknown>
+        paymentRows.map((row) => {
           const paymentDate = String(row.date ?? row.created_at ?? "")
           const paymentTimestamp = new Date(paymentDate).getTime()
           const customerAccountId = row.customer_account_id ? String(row.customer_account_id) : undefined
           const creditSaleId = row.credit_sale_id ? String(row.credit_sale_id) : undefined
-
-          let relatedInvoiceNumber = creditSaleId ? creditSalesById.get(creditSaleId) || "" : ""
-
-          if (!relatedInvoiceNumber && customerAccountId) {
-            const customerCreditSales = creditSalesByCustomer.get(customerAccountId) || []
-            const saleForPayment = customerCreditSales.find((sale) => {
-              const saleTimestamp = new Date(sale.date).getTime()
-              return Number.isFinite(paymentTimestamp) && Number.isFinite(saleTimestamp) && saleTimestamp <= paymentTimestamp
-            })
-            relatedInvoiceNumber = saleForPayment?.invoice_number || ""
-          }
+          const customerCreditSales = customerAccountId ? creditSalesByCustomer.get(customerAccountId) || [] : []
+          const saleForPayment = customerCreditSales.find((sale) => {
+            const saleTimestamp = new Date(sale.date).getTime()
+            return Number.isFinite(paymentTimestamp) && Number.isFinite(saleTimestamp) && saleTimestamp <= paymentTimestamp
+          })
+          const relatedInvoiceNumber =
+            (creditSaleId ? creditSalesById.get(creditSaleId) : undefined) || saleForPayment?.invoice_number
 
           return {
             id: String(row.id || ""),
@@ -860,7 +888,7 @@ export default function AlmacenClosingPage() {
             payment_method: normalizePaymentMethod(String(row.payment_method || "cash")),
             customer_account_id: customerAccountId,
             credit_sale_id: creditSaleId,
-            related_invoice_number: relatedInvoiceNumber || undefined,
+            related_invoice_number: relatedInvoiceNumber,
             invoice_number: String(row.invoice_number || ""),
             previous_debt: Number(row.previous_debt) || 0,
             remaining_debt: Number(row.remaining_debt) || 0,
@@ -909,7 +937,6 @@ export default function AlmacenClosingPage() {
   const loadData = async () => {
     setIsLoading(true)
     try {
-      await Promise.all([refreshData(), loadAlmacenDebtPayments(), loadAlmacenCustomerAccounts()])
       const { data, error } = await supabase
         .from("almacen_closings")
         .select("*")
@@ -953,7 +980,7 @@ export default function AlmacenClosingPage() {
   }
 
   useRealtimeTableRefresh(
-    ["almacen_closings", "almacen_payments", "almacen_customer_accounts", "sales", "products", "armacen"],
+    ["almacen_closings", "almacen_payments", "almacen_customer_accounts"],
     () => {
       void loadData()
     },
@@ -983,6 +1010,44 @@ export default function AlmacenClosingPage() {
   const resolveFinancialSummaryFromClosing = useCallback(
     (closing: AlmacenClosing): AlmacenClosingFinancialSummary | undefined => {
       const row = closing as unknown as Record<string, unknown>
+      let storedSummary = row.financial_summary
+      if (typeof storedSummary === "string" && storedSummary.trim()) {
+        try {
+          storedSummary = JSON.parse(storedSummary)
+        } catch {
+          storedSummary = undefined
+        }
+      }
+
+      if (storedSummary && typeof storedSummary === "object" && !Array.isArray(storedSummary)) {
+        const summary = storedSummary as Record<string, unknown>
+        const totalSales = summary.totalSales ?? summary.total_sales
+        const netIncome = summary.netIncome ?? summary.net_income
+        if (totalSales !== undefined || netIncome !== undefined) {
+          return {
+            totalSales: Number(totalSales) || 0,
+            invoiceCount: Number(summary.invoiceCount ?? summary.sales_count) || 0,
+            cashNet: Number(summary.cashNet ?? summary.cash_net) || 0,
+            cardNet: Number(summary.cardNet ?? summary.card_net) || 0,
+            transferNet: Number(summary.transferNet ?? summary.transfer_net) || 0,
+            creditNet: Number(summary.creditNet ?? summary.credit_net) || 0,
+            totalReturns: Number(summary.totalReturns ?? summary.total_returns) || 0,
+            returnsCount: Number(summary.returnsCount ?? summary.returns_count) || 0,
+            netIncome: Number(netIncome) || 0,
+            cashDebtPayments: Number(summary.cashDebtPayments ?? summary.cash_debt_payments) || 0,
+            openingBalance: summary.openingBalance !== undefined || summary.opening_balance !== undefined
+              ? Number(summary.openingBalance ?? summary.opening_balance) || 0
+              : undefined,
+            countedAmount: summary.countedAmount !== undefined || summary.counted_amount !== undefined
+              ? Number(summary.countedAmount ?? summary.counted_amount) || 0
+              : undefined,
+            discrepancy: summary.discrepancy !== undefined && Number.isFinite(Number(summary.discrepancy))
+              ? Number(summary.discrepancy)
+              : undefined,
+          }
+        }
+      }
+
       const hasFinancialFields =
         row.total_sales !== undefined ||
         row.net_income !== undefined ||
@@ -1004,30 +1069,162 @@ export default function AlmacenClosingPage() {
         returnsCount: Number(row.returns_count) || 0,
         netIncome: Number(row.net_income) || 0,
         cashDebtPayments: Number(row.cash_debt_payments) || 0,
+        openingBalance: row.opening_balance !== undefined ? Number(row.opening_balance) || 0 : undefined,
+        countedAmount: row.counted_amount !== undefined ? Number(row.counted_amount) || 0 : undefined,
+        discrepancy: row.discrepancy !== undefined && Number.isFinite(Number(row.discrepancy))
+          ? Number(row.discrepancy)
+          : undefined,
       }
     },
     [],
   )
 
+  const rebuildHistoricalFinancialSummary = async (closing: AlmacenClosing): Promise<AlmacenClosingFinancialSummary> => {
+    const closingDate = closing.date.slice(0, 10)
+    const isOnClosingDate = (value: string | undefined) => {
+      if (!value) return false
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value === closingDate
+      const date = new Date(value)
+      return !Number.isNaN(date.getTime()) && formatLocalDate(date) === closingDate
+    }
+
+    const historicalSales = sales.filter((sale) => {
+      const status = String(sale.status || "").toLowerCase()
+      return isOnClosingDate(sale.date) &&
+        !["pending", "anulada", "cancelled"].includes(status) &&
+        getAlmacenRatioFromSale(sale, almacenProductIds) > 0
+    })
+    const methodTotals = createEmptyMethodTotals()
+
+    historicalSales.forEach((sale) => {
+      const ratio = getAlmacenRatioFromSale(sale, almacenProductIds)
+      const breakdown = scaleMethodBreakdown(calculateSaleMethodBreakdown(sale), ratio)
+      ;(Object.keys(methodTotals) as PaymentMethodKey[]).forEach((method) => {
+        methodTotals[method].sales += breakdown[method]
+      })
+    })
+
+    const historicalReturns = returns.filter((ret) => isOnClosingDate(ret.date))
+    const historicalReturnsCounted = historicalReturns.reduce((count, ret) => {
+      const originalSale = salesById.get(ret.invoiceId)
+      const almacenReturnTotal = (Array.isArray(ret.items) ? ret.items : []).reduce((total, rawItem) => {
+        const returnItem = rawItem as unknown as Record<string, unknown>
+        const matchingSaleItem = findMatchingSaleItemForReturn(originalSale, returnItem)
+        return isAlmacenItemRecord(matchingSaleItem ?? returnItem, almacenProductIds)
+          ? total + getItemSubtotal(returnItem)
+          : total
+      }, 0)
+
+      if (almacenReturnTotal <= 0) return count
+      const breakdown = createEmptyMethodBreakdown()
+      if (ret.type === "credito") {
+        breakdown.credit = almacenReturnTotal
+      } else if (originalSale) {
+        const originalBreakdown = calculateSaleMethodBreakdown(originalSale)
+        const originalTotal = sumMethodBreakdown(originalBreakdown)
+        if (originalTotal > 0) {
+          ;(Object.keys(breakdown) as PaymentMethodKey[]).forEach((method) => {
+            breakdown[method] = (originalBreakdown[method] / originalTotal) * almacenReturnTotal
+          })
+        } else {
+          breakdown[normalizePaymentMethod(originalSale.paymentMethod)] = almacenReturnTotal
+        }
+      } else {
+        breakdown.cash = almacenReturnTotal
+      }
+      ;(Object.keys(methodTotals) as PaymentMethodKey[]).forEach((method) => {
+        methodTotals[method].returns += breakdown[method]
+      })
+      return count + 1
+    }, 0)
+
+    const start = new Date(`${closingDate}T00:00:00`)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 1)
+    const { data: paymentRows, error: paymentError } = await supabase
+      .from("almacen_payments")
+      .select("date, amount, payment_method")
+      .gte("date", start.toISOString())
+      .lt("date", end.toISOString())
+
+    if (paymentError && !isMissingTableError(paymentError)) throw paymentError
+    const historicalPayments = (paymentRows || []) as Array<Record<string, unknown>>
+    historicalPayments.forEach((payment) => {
+      const method = normalizePaymentMethod(String(payment.payment_method || "cash"))
+      methodTotals[method].payments += normalizePositiveAmount(payment.amount)
+    })
+
+    const totalSales = sumMethodBreakdown({
+      cash: methodTotals.cash.sales,
+      card: methodTotals.card.sales,
+      transfer: methodTotals.transfer.sales,
+      credit: methodTotals.credit.sales,
+    })
+    const totalReturns = sumMethodBreakdown({
+      cash: methodTotals.cash.returns,
+      card: methodTotals.card.returns,
+      transfer: methodTotals.transfer.returns,
+      credit: methodTotals.credit.returns,
+    })
+    const totalPayments = sumMethodBreakdown({
+      cash: methodTotals.cash.payments,
+      card: methodTotals.card.payments,
+      transfer: methodTotals.transfer.payments,
+      credit: methodTotals.credit.payments,
+    })
+    const closingRow = closing as unknown as Record<string, unknown>
+    const openingBalance = closingRow.opening_balance !== undefined
+      ? Number(closingRow.opening_balance) || 0
+      : undefined
+    const countedAmount = closingRow.counted_amount !== undefined
+      ? Number(closingRow.counted_amount) || 0
+      : undefined
+    const cashNet = methodTotals.cash.sales + methodTotals.cash.payments - methodTotals.cash.returns
+
+    return {
+      totalSales,
+      invoiceCount: historicalSales.length,
+      cashNet,
+      cardNet: methodTotals.card.sales + methodTotals.card.payments - methodTotals.card.returns,
+      transferNet: methodTotals.transfer.sales + methodTotals.transfer.payments - methodTotals.transfer.returns,
+      creditNet: methodTotals.credit.sales + methodTotals.credit.payments - methodTotals.credit.returns,
+      totalReturns,
+      returnsCount: historicalReturnsCounted,
+      netIncome: totalSales - totalReturns + totalPayments,
+      cashDebtPayments: methodTotals.cash.payments,
+      openingBalance,
+      countedAmount,
+      discrepancy: openingBalance !== undefined && countedAmount !== undefined
+        ? openingBalance + cashNet - countedAmount
+        : undefined,
+    }
+  }
+
   const handleDownloadHistory = async (closing: AlmacenClosing) => {
     try {
-      const snapshot = normalizeSnapshot(closing.snapshot)
       const historicalFinancialSummary =
-        resolveFinancialSummaryFromClosing(closing) || (closing.date === selectedDate ? closingFinancialSummary : undefined)
+        resolveFinancialSummaryFromClosing(closing) || await rebuildHistoricalFinancialSummary(closing)
+      const targetSales = sales.filter(
+        (sale) =>
+          typeof sale.date === "string" &&
+          sale.date.startsWith(closing.date) &&
+          sale.status !== "anulada" &&
+          sale.status !== "pending" &&
+          getAlmacenRatioFromSale(sale, almacenProductIds) > 0,
+      )
       const pdfBlob = await generateAlmacenClosingPDF({
         date: closing.date,
         closingNumber: closing.closing_number,
         cashier: closing.cashier_name,
-        totalProducts: Number(closing.total_products) || snapshot.length,
-        totalUnitsExpected: Number(closing.total_units_expected) || 0,
-        totalUnitsCounted: Number(closing.total_units_counted) || 0,
-        discrepancyUnits: Number(closing.discrepancy_units) || 0,
-        totalCostExpected: Number(closing.total_cost_expected) || 0,
-        totalCostCounted: Number(closing.total_cost_counted) || 0,
-        discrepancyCost: Number(closing.discrepancy_cost) || 0,
         notes: closing.notes || "",
-        snapshot,
         financialSummary: historicalFinancialSummary,
+        transactions: {
+          invoices: targetSales.map((sale) => ({
+            number: sale.invoiceNumber || "N/A",
+            method: sale.paymentMethod || "cash",
+            total: normalizePositiveAmount(sale.total) * getAlmacenRatioFromSale(sale, almacenProductIds),
+          })),
+        },
       }, currentUser?.adminId)
 
       const url = URL.createObjectURL(pdfBlob)
@@ -1042,9 +1239,10 @@ export default function AlmacenClosingPage() {
       toast({ description: "PDF descargado correctamente." })
     } catch (error) {
       console.error("Error downloading almacen closing pdf:", error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
       toast({
         title: "Error",
-        description: "No se pudo generar el PDF del cierre de almacen.",
+        description: `No se pudo generar el PDF del cierre de almacen. ${errorMessage}`,
         variant: "destructive",
       })
     }
@@ -1114,6 +1312,7 @@ export default function AlmacenClosingPage() {
         status: summary.status,
         notes: closingNotes || "",
         snapshot: snapshotItems,
+        financial_summary: closingFinancialSummary,
       }
 
       const { error } = await supabase.from("almacen_closings").insert(closingData)
@@ -1123,15 +1322,7 @@ export default function AlmacenClosingPage() {
         date: selectedDate,
         closingNumber,
         cashier: currentUser?.name || "Sistema",
-        totalProducts: summary.totalProducts,
-        totalUnitsExpected: summary.totalUnitsExpected,
-        totalUnitsCounted: summary.totalUnitsCounted,
-        discrepancyUnits: summary.discrepancyUnits,
-        totalCostExpected: summary.totalCostExpected,
-        totalCostCounted: summary.totalCostCounted,
-        discrepancyCost: summary.discrepancyCost,
         notes: closingNotes,
-        snapshot: snapshotItems,
         financialSummary: closingFinancialSummary,
       }, currentUser?.adminId)
 
@@ -1147,13 +1338,6 @@ export default function AlmacenClosingPage() {
           closingNumber,
           date: selectedDate,
           cashierName: currentUser?.name || "Sistema",
-          totalProducts: summary.totalProducts,
-          totalUnitsExpected: summary.totalUnitsExpected,
-          totalUnitsCounted: summary.totalUnitsCounted,
-          discrepancyUnits: summary.discrepancyUnits,
-          totalCostExpected: summary.totalCostExpected,
-          totalCostCounted: summary.totalCostCounted,
-          discrepancyCost: summary.discrepancyCost,
           notes: closingNotes,
           financialSummary: closingFinancialSummary,
         },
@@ -1713,19 +1897,19 @@ export default function AlmacenClosingPage() {
               </CardContent>
             </Card>
 
-            <Card className="shadow-lg">
+            <Card className="min-w-0 shadow-lg">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <FileText className="h-5 w-5 text-blue-500" />
                   Facturas del Dia ({filteredSales.length})
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[360px]">
+              <CardContent className="min-w-0">
+                <ScrollArea className="h-[360px] w-full max-w-full">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>No. Factura</TableHead>
+                        <TableHead>Descripción</TableHead>
                         <TableHead>Cliente</TableHead>
                         <TableHead className="w-[1%] whitespace-nowrap px-1">Metodo</TableHead>
                         <TableHead className="w-[1%] whitespace-nowrap px-1 text-right">Total Almacen</TableHead>
@@ -1737,8 +1921,22 @@ export default function AlmacenClosingPage() {
                       {filteredSales.length > 0 ? (
                         filteredSales.map((sale) => (
                           <TableRow key={sale.id}>
-                            <TableCell className="font-mono font-medium">{sale.invoiceNumber || sale.invoice_number}</TableCell>
-                            <TableCell>{sale.customer_name || sale.customerName || "Cliente General"}</TableCell>
+                            <TableCell className="max-w-[240px] whitespace-normal break-words md:whitespace-normal">
+                              <span className="block max-w-[240px] whitespace-normal break-words">
+                                {sale.items
+                                  .filter((item) =>
+                                    isAlmacenItemRecord(item as unknown as Record<string, unknown>, almacenProductIds),
+                                  )
+                                  .map((item) => item.name?.trim())
+                                  .filter((name): name is string => Boolean(name))
+                                  .join(", ") || "Sin descripción"}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[140px] whitespace-normal break-words md:whitespace-normal">
+                              <span className="block max-w-[140px] whitespace-normal break-words">
+                                {sale.customer_name || sale.customerName || "Cliente General"}
+                              </span>
+                            </TableCell>
                             <TableCell className="w-[1%] whitespace-nowrap px-1">
                               {(() => {
                                 const paymentMethod = normalizePaymentMethod(sale.paymentMethod)
@@ -1805,23 +2003,23 @@ export default function AlmacenClosingPage() {
               </CardContent>
             </Card>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <Card className="shadow-lg">
+            <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <Card className="min-w-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-red-600">
                     <TrendingDown className="h-5 w-5" />
                     Devoluciones ({dayReturns.length})
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[220px]">
+                <CardContent className="min-w-0">
+                  <ScrollArea className="h-[220px] w-full max-w-full">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           <TableHead>No. Devolucion</TableHead>
                           <TableHead>Factura</TableHead>
                           <TableHead className="text-right">Monto</TableHead>
-                          <TableHead>Usuario</TableHead>
+                          <TableHead>Cliente</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1831,7 +2029,14 @@ export default function AlmacenClosingPage() {
                               <TableCell className="font-mono">{ret.returnNumber}</TableCell>
                               <TableCell>{ret.invoiceNumber}</TableCell>
                               <TableCell className="text-right text-red-600 font-bold">-${formatCurrency(ret.almacenTotal)}</TableCell>
-                              <TableCell>{ret.processed_by || "Sistema"}</TableCell>
+                              <TableCell className="max-w-[140px] whitespace-normal break-words md:whitespace-normal">
+                                <span className="block max-w-[140px] whitespace-normal break-words">
+                                  {ret.customerName ||
+                                    salesById.get(ret.invoiceId)?.customer_name ||
+                                    salesById.get(ret.invoiceId)?.customerName ||
+                                    "Cliente General"}
+                                </span>
+                              </TableCell>
                             </TableRow>
                           ))
                         ) : (
@@ -1847,15 +2052,15 @@ export default function AlmacenClosingPage() {
                 </CardContent>
               </Card>
 
-              <Card className="shadow-lg">
+              <Card className="min-w-0 shadow-lg">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-blue-600">
                     <FileText className="h-5 w-5" />
                     Pagos de Deuda ({dayPayments.length})
                   </CardTitle>
                 </CardHeader>
-                <CardContent>
-                  <ScrollArea className="h-[220px]">
+                <CardContent className="min-w-0">
+                  <ScrollArea className="h-[220px] w-full max-w-full">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1863,6 +2068,7 @@ export default function AlmacenClosingPage() {
                           <TableHead className="text-right">Monto</TableHead>
                           <TableHead className="text-right">Deuda Ant.</TableHead>
                           <TableHead className="text-right">Restante</TableHead>
+                          <TableHead>Cliente</TableHead>
                           <TableHead className="text-center">Detalles</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1870,7 +2076,7 @@ export default function AlmacenClosingPage() {
                         {dayPayments.length > 0 ? (
                           dayPayments.map((payment) => (
                             <TableRow key={payment.id}>
-                              <TableCell className="font-mono font-medium">
+                              <TableCell className="max-w-[100px] whitespace-normal break-words font-mono font-medium md:whitespace-normal">
                                 {payment.related_invoice_number || payment.invoice_number || payment.id}
                               </TableCell>
                               <TableCell className="text-right text-green-600">${formatCurrency(payment.amount)}</TableCell>
@@ -1879,6 +2085,11 @@ export default function AlmacenClosingPage() {
                               </TableCell>
                               <TableCell className="text-right text-muted-foreground">
                                 {payment.remaining_debt !== undefined ? formatCurrency(payment.remaining_debt) : "-"}
+                              </TableCell>
+                              <TableCell className="max-w-[140px] whitespace-normal break-words md:whitespace-normal">
+                                <span className="block max-w-[140px] whitespace-normal break-words">
+                                  {payment.customer_account_id ? getCustomerName(payment.customer_account_id) : "Cliente Desconocido"}
+                                </span>
                               </TableCell>
                               <TableCell className="text-center">
                                 <Button
@@ -1894,7 +2105,7 @@ export default function AlmacenClosingPage() {
                           ))
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                            <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                               No hay pagos
                             </TableCell>
                           </TableRow>
@@ -2108,21 +2319,45 @@ export default function AlmacenClosingPage() {
               <CardContent>
                 <ScrollArea className="h-[500px]">
                   <Table>
-                    <TableHeader><TableRow><TableHead>No. Cierre</TableHead><TableHead>Fecha</TableHead><TableHead>Usuario</TableHead><TableHead className="text-right">Productos</TableHead><TableHead className="text-right">Dif. unid.</TableHead><TableHead className="text-right">Dif. costo</TableHead><TableHead className="w-[1%] whitespace-nowrap px-1">Estado</TableHead><TableHead className="w-[1%] whitespace-nowrap px-1 text-right"></TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>No. Cierre</TableHead><TableHead>Fecha</TableHead><TableHead>Cajero</TableHead><TableHead className="text-right">Ventas</TableHead><TableHead className="text-right">Esperado</TableHead><TableHead className="text-right">Contado</TableHead><TableHead className="text-right">Diferencia</TableHead><TableHead>Estado</TableHead><TableHead className="w-[50px]"></TableHead></TableRow></TableHeader>
                     <TableBody>
                       {almacenClosings.length > 0 ? almacenClosings.map((closing) => (
                         <TableRow key={closing.id}>
                           <TableCell className="font-mono font-medium">{closing.closing_number}</TableCell>
                           <TableCell>{new Date(closing.date).toLocaleDateString()}</TableCell>
                           <TableCell>{closing.cashier_name}</TableCell>
-                          <TableCell className="text-right">{Number(closing.total_products) || 0}</TableCell>
-                          <TableCell className="text-right">{Number(closing.discrepancy_units) || 0}</TableCell>
-                          <TableCell className="text-right">${formatCurrency(Number(closing.discrepancy_cost) || 0)}</TableCell>
-                          <TableCell className="w-[1%] whitespace-nowrap px-1">{getStatusBadge(closing.status)}</TableCell>
-                          <TableCell className="w-[1%] whitespace-nowrap px-1 text-right"><Button variant="ghost" size="icon" onClick={() => handleDownloadHistory(closing)} title="Descargar PDF"><Download className="h-4 w-4" /></Button></TableCell>
+                          {(() => {
+                            const summary = resolveFinancialSummaryFromClosing(closing)
+                            const totalSales = summary?.totalSales ?? 0
+                            const expectedAmountValue = summary?.openingBalance !== undefined
+                              ? summary.openingBalance + summary.cashNet
+                              : undefined
+                            const discrepancyValue = summary?.discrepancy ??
+                              (expectedAmountValue !== undefined && summary?.countedAmount !== undefined
+                                ? expectedAmountValue - summary.countedAmount
+                                : undefined)
+                            return (
+                              <>
+                                <TableCell className="text-right">${formatCurrency(totalSales)}</TableCell>
+                                <TableCell className="text-right">
+                                  {expectedAmountValue === undefined ? "—" : `$${formatCurrency(expectedAmountValue)}`}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {summary?.countedAmount === undefined ? "—" : `$${formatCurrency(summary.countedAmount)}`}
+                                </TableCell>
+                                <TableCell className={`text-right font-bold ${discrepancyValue === undefined ? "text-muted-foreground" : discrepancyValue === 0 ? "text-green-600" : discrepancyValue > 0 ? "text-red-600" : "text-orange-600"}`}>
+                                  {discrepancyValue === undefined ? "—" : `$${formatCurrency(Math.abs(discrepancyValue))}`}
+                                </TableCell>
+                              </>
+                            )
+                          })()}
+                          <TableCell>{getStatusBadge(closing.status)}</TableCell>
+                          <TableCell>
+                            <Button variant="ghost" size="icon" onClick={() => handleDownloadHistory(closing)} title="Descargar PDF"><Download className="h-4 w-4" /></Button>
+                          </TableCell>
                         </TableRow>
                       )) : (
-                        <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">{isLoading ? "Cargando historial..." : "No hay cierres registrados"}</TableCell></TableRow>
+                        <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">{isLoading ? "Cargando historial..." : "No hay cierres registrados"}</TableCell></TableRow>
                       )}
                     </TableBody>
                   </Table>
