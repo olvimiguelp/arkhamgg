@@ -328,6 +328,33 @@ export default function SalesPage() {
   const [newCreditCustomerCreditLimit, setNewCreditCustomerCreditLimit] = useState("")
   const [newCreditCustomerCreditDevice, setNewCreditCustomerCreditDevice] = useState("")
   const [openNewCreditCombobox, setOpenNewCreditCombobox] = useState(false)
+  const [creditCustomerSearch, setCreditCustomerSearch] = useState("")
+
+  const selectedCreditCustomerForSale = useMemo(
+    () => customers.find((customer) => customer.id === selectedCustomerForCredit) || null,
+    [customers, selectedCustomerForCredit],
+  )
+  const filteredCreditCustomers = useMemo(() => {
+    const query = creditCustomerSearch
+      .trim()
+      .toLocaleLowerCase("es")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+    const phoneQuery = creditCustomerSearch.replace(/\D/g, "")
+
+    if (!query && !phoneQuery) return customers
+
+    return customers.filter((customer) => {
+      const name = (customer.name || "")
+        .toLocaleLowerCase("es")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+      const phone = customer.phone || ""
+      const phoneDigits = phone.replace(/\D/g, "")
+
+      return name.includes(query) || phone.toLowerCase().includes(query) || (phoneQuery.length > 0 && phoneDigits.includes(phoneQuery))
+    })
+  }, [customers, creditCustomerSearch])
 
   const [isProcessingCheckout, setIsProcessingCheckout] = useState(false)
   const [isProcessingPartialCredit, setIsProcessingPartialCredit] = useState(false)
@@ -424,7 +451,7 @@ export default function SalesPage() {
           )}
         </div>
       </CardHeader>
-      <CardContent className="flex-1 overflow-auto scroll-smooth py-1 px-0 sm:px-4">
+      <CardContent onWheel={handleSalesWheel} className="flex-1 overflow-auto scroll-auto py-1 px-0 sm:px-4">
         <Table className="[&_td]:p-0.5 [&amp;_th]:p-0.5">
           <TableHeader>
             <TableRow>
@@ -1139,6 +1166,28 @@ export default function SalesPage() {
       }
     }
   }
+
+  const handleSalesWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
+    const element = event.currentTarget
+    const maxScrollTop = element.scrollHeight - element.clientHeight
+    if (maxScrollTop <= 0) return
+
+    const deltaY =
+      event.deltaMode === 1
+        ? event.deltaY * 16
+        : event.deltaMode === 2
+          ? event.deltaY * element.clientHeight
+          : event.deltaY
+    const scrollTop = Math.max(0, Math.min(maxScrollTop, element.scrollTop))
+    const isAtTop = scrollTop <= 0
+    const isAtBottom = scrollTop >= maxScrollTop - 1
+
+    if ((isAtTop && deltaY < 0) || (isAtBottom && deltaY > 0)) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    element.scrollTop = Math.max(0, Math.min(maxScrollTop, scrollTop + deltaY))
+  }, [])
 
   const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -2560,7 +2609,7 @@ export default function SalesPage() {
               </div>
             )}
 
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-24 pr-1 scroll-smooth sm:pr-2 md:pb-4">
+            <div onWheel={handleSalesWheel} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-24 pr-1 scroll-auto sm:pr-2 md:pb-4">
               {/* Replaced inline grid with ProductGrid component for consistent CSS Grid layout */}
               {/* eslint-disable-next-line @typescript-eslint/ban-ts-comment */}
               {/* @ts-ignore-next-line */}
@@ -3853,11 +3902,17 @@ export default function SalesPage() {
 
       <Dialog open={showCreditDialog} onOpenChange={(open) => {
         setShowCreditDialog(open)
+        if (open) {
+          setCreditCustomerSearch("")
+          setOpenNewCreditCombobox(false)
+        }
         if (!open) {
           setCreditDialogMode("type")
           setSelectedAlmacenCustomerForCredit("")
           setSelectedGeneralCustomerForAlmacenCredit("none")
           setSelectedCustomerForCredit("")
+          setCreditCustomerSearch("")
+          setOpenNewCreditCombobox(false)
           setAlmacenCustomerName("")
           setAlmacenCustomerPhone("")
           setAlmacenSourceCustomerId(null)
@@ -4159,22 +4214,66 @@ export default function SalesPage() {
                 <>
                   <div className="space-y-2">
                     <Label>Seleccionar Cliente</Label>
-                    <Select value={selectedCustomerForCredit} onValueChange={setSelectedCustomerForCredit}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccione un cliente" />
-                      </SelectTrigger>
-                      <SelectContent className="max-h-[40vh]">
-                        {customers.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            <div className="flex flex-col">
-                              <span>{c.name}</span>
-                              <span className="text-xs text-muted-foreground">Cédula: {c.cedula}</span>
-                              <span className="text-xs text-muted-foreground">Teléfono: {c.phone}</span>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={openNewCreditCombobox} onOpenChange={setOpenNewCreditCombobox}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          aria-expanded={openNewCreditCombobox}
+                          className="w-full justify-between font-normal"
+                        >
+                          <span className="truncate text-left">
+                            {selectedCreditCustomerForSale
+                              ? `${selectedCreditCustomerForSale.name}${selectedCreditCustomerForSale.phone ? ` · ${selectedCreditCustomerForSale.phone}` : ""}`
+                              : "Buscar por nombre o teléfono"}
+                          </span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                        <Command shouldFilter={false}>
+                          <CommandInput
+                            autoFocus
+                            placeholder="Escribe un nombre o número..."
+                            value={creditCustomerSearch}
+                            onValueChange={setCreditCustomerSearch}
+                          />
+                          <CommandList onWheel={handleSalesWheel}>
+                            <CommandEmpty>
+                              {customers.length === 0 ? "No hay clientes registrados." : "No se encontraron clientes."}
+                            </CommandEmpty>
+                            <CommandGroup>
+                              {filteredCreditCustomers.map((customer) => (
+                                <CommandItem
+                                  key={customer.id}
+                                  value={customer.id}
+                                  onSelect={() => {
+                                    setSelectedCustomerForCredit(customer.id)
+                                    setCreditCustomerSearch("")
+                                    setOpenNewCreditCombobox(false)
+                                  }}
+                                >
+                                  <Check
+                                    className={cn(
+                                      "mr-2 h-4 w-4",
+                                      selectedCustomerForCredit === customer.id ? "opacity-100" : "opacity-0",
+                                    )}
+                                  />
+                                  <span className="flex min-w-0 flex-col">
+                                    <span className="truncate">{customer.name}</span>
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      Teléfono: {customer.phone || "Sin teléfono"}
+                                      {customer.cedula ? ` · Cédula: ${customer.cedula}` : ""}
+                                    </span>
+                                  </span>
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   {selectedCustomerForCredit && (

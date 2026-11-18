@@ -228,28 +228,37 @@ async function processOnce(client) {
     console.log(`Processing ${due.length} reminders...`)
 
     const sentIds = []
+    let skippedCount = 0
     for (const customer of due) {
       try {
         const result = await sendReminder(client, customer)
-        if (result.ok) {
-          sentIds.push(customer.id)
-        } else {
+        if (!result.ok) {
+          skippedCount += 1
           if (result.reason === "not_on_whatsapp") {
-            console.warn("Skipped:", customer.id, result.reason, result.normalized || "")
+            console.warn("Skipped:", customer.id, result.reason, result.normalized || "", "- continuing to next customer")
           } else if (result.reason === "send_failed") {
-            console.warn("Skipped:", customer.id, result.reason, `after ${result.attempts} attempts`, result.error || "")
+            console.warn("Skipped:", customer.id, result.reason, `after ${result.attempts} attempts`, result.error || "", "- continuing to next customer")
           } else {
-            console.warn("Skipped:", customer.id, result.reason)
+            console.warn("Skipped:", customer.id, result.reason, "- continuing to next customer")
           }
+          if (REMINDER_DELAY_MS > 0) await sleep(REMINDER_DELAY_MS)
+          continue
         }
+
+        sentIds.push(customer.id)
       } catch (error) {
-        console.error("Send failed:", customer.id, error?.message || error)
+        skippedCount += 1
+        console.error("Send failed:", customer.id, error?.message || error, "- continuing to next customer")
+        if (REMINDER_DELAY_MS > 0) await sleep(REMINDER_DELAY_MS)
+        continue
       }
 
       if (REMINDER_DELAY_MS > 0) {
         await sleep(REMINDER_DELAY_MS)
       }
     }
+
+    console.log(`Reminder batch finished: ${sentIds.length} sent, ${skippedCount} skipped.`)
 
     if (sentIds.length > 0) {
       const { error } = await supabase
