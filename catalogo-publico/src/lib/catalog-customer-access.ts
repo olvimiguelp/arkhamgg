@@ -5,9 +5,11 @@ type SupabaseClient = ReturnType<typeof createClient>
 export async function invokeCatalogCustomerAccess(
   supabase: SupabaseClient,
   request: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const { data, error } = await supabase.functions.invoke("catalog-customer-access", {
     body: request,
+    signal,
   })
 
   if (error) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import catalogLogo from "./assets/catalog-logo.png"
 import { invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
@@ -106,41 +106,55 @@ function errorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal?: AbortSignal): Promise<CatalogSnapshot> {
-  const query = supabase.rpc("get_public_catalog_snapshot", {
-    p_token: request.token,
-    p_limit: PRODUCTS_PER_PAGE,
-    p_offset: request.offset,
-    p_search: request.search || null,
-    p_category: request.category || null,
-    p_include_categories: request.includeCategories,
-  })
-  const { data, error } = await (signal ? query.abortSignal(signal) : query)
-  if (error) throw error
-
-  return parseCatalogSnapshot(data)
+async function getCatalogPage(
+  supabase: ReturnType<typeof createClient>,
+  sessionToken: string,
+  request: CatalogPageRequest,
+  signal?: AbortSignal,
+): Promise<CatalogSnapshot> {
+  const response = await invokeCatalogCustomerAccess(supabase, {
+    action: "catalog",
+    session_token: sessionToken,
+    token: request.token,
+    limit: PRODUCTS_PER_PAGE,
+    offset: request.offset,
+    search: request.search,
+    category: request.category,
+    include_categories: request.includeCategories,
+  }, signal)
+  if (!response.snapshot || typeof response.snapshot !== "object") {
+    throw new Error("La función devolvió un catálogo inválido")
+  }
+  return parseCatalogSnapshot(response.snapshot)
 }
 
 async function getStorefrontSections(
   supabase: ReturnType<typeof createClient>,
-  ownerAdminId: string,
+  sessionToken: string,
 ): Promise<CatalogStorefrontSection[]> {
-  const { data, error } = await supabase.rpc("catalog_storefront_sections", { p_owner: ownerAdminId })
-  if (error) throw error
-  const sections = (Array.isArray(data) ? data : []) as CatalogStorefrontSection[]
+  const response = await invokeCatalogCustomerAccess(supabase, {
+    action: "storefront",
+    session_token: sessionToken,
+  })
+  const sections = (Array.isArray(response.sections) ? response.sections : []) as CatalogStorefrontSection[]
   const activeSections = sections.filter((section) =>
     Boolean(section) &&
     typeof section.token === "string" &&
     ["normal", "wholesale", "warehouse"].includes(section.kind),
   )
-  if (!activeSections.length) throw new Error("Tu administrador todavía no publicó un catálogo.")
   return activeSections
 }
 
-function CatalogoPublico() {
+function selectStorefrontToken(sections: CatalogStorefrontSection[], requestedToken: string) {
+  if (requestedToken) return requestedToken
+  const section = sections.find((item) => item.kind === "normal") || sections[0]
+  if (!section) throw new Error("Tu administrador todavía no publicó un catálogo.")
+  return section.token
+}
+
+function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createClient> }) {
   const requestedToken = new URLSearchParams(window.location.search).get("token") || ""
   const [token, setToken] = useState("")
-  const supabase = useMemo(() => createClient(), [])
   const [storefrontSections, setStorefrontSections] = useState<CatalogStorefrontSection[]>([])
   const [business, setBusiness] = useState("Catalogo 049")
   const [products, setProducts] = useState<Product[]>([])
@@ -227,14 +241,10 @@ function CatalogoPublico() {
         })
         setName(customer.name)
         setPhone(customer.phone)
-        const sections = await getStorefrontSections(supabase, customer.owner_admin_id)
+        const sections = await getStorefrontSections(supabase, sessionToken)
         if (cancelled) return
         setStorefrontSections(sections)
-        const selectedSection = requestedToken
-          ? sections.find((section) => section.token === requestedToken) ||
-            sections.find((section) => section.kind === "normal") || sections[0]
-          : sections.find((section) => section.kind === "normal") || sections[0]
-        setToken(selectedSection.token)
+        setToken(selectStorefrontToken(sections, requestedToken))
         setMessage("")
       } catch (error) {
         if (cancelled) return
@@ -260,7 +270,8 @@ function CatalogoPublico() {
   }, [requestedToken, supabase])
 
   useEffect(() => {
-    if (!token) return
+    if (!token || !customerSession) return
+    const sessionToken = customerSession.sessionToken
     const controller = new AbortController()
     const defaultQuery = makeCatalogQueryKey(token, "", "")
     activeQueryRef.current = defaultQuery
@@ -283,7 +294,7 @@ function CatalogoPublico() {
 
     void (async () => {
       try {
-        const snapshot = await getCatalogPage(supabase, {
+        const snapshot = await getCatalogPage(supabase, sessionToken, {
           token,
           search: "",
           category: "",
@@ -310,7 +321,7 @@ function CatalogoPublico() {
     })()
 
     return () => controller.abort()
-  }, [supabase, token])
+  }, [customerSession?.sessionToken, supabase, token])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(searchTerm.trim()), SEARCH_DEBOUNCE_MS)
@@ -318,7 +329,8 @@ function CatalogoPublico() {
   }, [searchTerm])
 
   useEffect(() => {
-    if (!catalogReady) return
+    if (!catalogReady || !customerSession) return
+    const sessionToken = customerSession.sessionToken
     const search = debouncedSearch.trim()
     const category = selectedCategory === "all" ? "" : selectedCategory
     const queryKey = makeCatalogQueryKey(token, search, category)
@@ -330,7 +342,7 @@ function CatalogoPublico() {
 
     void (async () => {
       try {
-        const snapshot = await getCatalogPage(supabase, {
+        const snapshot = await getCatalogPage(supabase, sessionToken, {
           token,
           search,
           category,
@@ -351,11 +363,12 @@ function CatalogoPublico() {
     })()
 
     return () => controller.abort()
-  }, [catalogReady, debouncedSearch, selectedCategory, supabase, token])
+  }, [catalogReady, customerSession?.sessionToken, debouncedSearch, selectedCategory, supabase, token])
 
   const loadMore = useCallback(async () => {
-    if (!catalogReady || loadingMore || pageLoading || !hasMore) return
+    if (!catalogReady || !customerSession || loadingMore || pageLoading || !hasMore) return
 
+    const sessionToken = customerSession.sessionToken
     const search = debouncedSearch.trim()
     const category = selectedCategory === "all" ? "" : selectedCategory
     const queryKey = makeCatalogQueryKey(token, search, category)
@@ -363,7 +376,7 @@ function CatalogoPublico() {
     setLoadingMore(true)
 
     try {
-      const snapshot = await getCatalogPage(supabase, {
+      const snapshot = await getCatalogPage(supabase, sessionToken, {
         token,
         search,
         category,
@@ -383,7 +396,7 @@ function CatalogoPublico() {
     } finally {
       setLoadingMore(false)
     }
-  }, [catalogReady, debouncedSearch, hasMore, loadingMore, pageLoading, products.length, selectedCategory, supabase, token])
+  }, [catalogReady, customerSession?.sessionToken, debouncedSearch, hasMore, loadingMore, pageLoading, products.length, selectedCategory, supabase, token])
 
   const add = (product: Product) => {
     if (product.stock <= 0) return
@@ -406,14 +419,6 @@ function CatalogoPublico() {
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
   const hasActiveFilters = Boolean(searchTerm.trim()) || selectedCategory !== "all"
   const canUseCustomerAccounts = Boolean(customerSession)
-
-  const selectStorefrontSection = (sections: CatalogStorefrontSection[]) => {
-    const section = requestedToken
-      ? sections.find((item) => item.token === requestedToken) ||
-        sections.find((item) => item.kind === "normal") || sections[0]
-      : sections.find((item) => item.kind === "normal") || sections[0]
-    return section
-  }
 
   const login = async () => {
     const identifier = loginIdentifier.trim()
@@ -476,11 +481,11 @@ function CatalogoPublico() {
         console.error("No se pudo guardar la sesión del catálogo:", error)
       }
 
-      const sections = await getStorefrontSections(supabase, session.ownerAdminId)
-      const section = selectStorefrontSection(sections)
+      const sections = await getStorefrontSections(supabase, session.sessionToken)
+      const catalogToken = selectStorefrontToken(sections, requestedToken)
       setStorefrontSections(sections)
       setMessage("")
-      setToken(section.token)
+      setToken(catalogToken)
     } catch (error) {
       const description = errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente.")
       if (authenticated) setMessage(description)
@@ -564,7 +569,7 @@ function CatalogoPublico() {
         <div className="state-card">
           <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
           <h1>Iniciar sesión</h1>
-          <p>Usa el correo y la contraseña que te asignó el administrador del catálogo.</p>
+          <p>Usa el correo o teléfono y la contraseña que te asignó el administrador del catálogo.</p>
           <div className="checkout-form">
             <input autoComplete="username" placeholder="Correo electrónico o teléfono" value={loginIdentifier}
               onChange={(event) => setLoginIdentifier(event.target.value)} />
@@ -746,6 +751,22 @@ function CatalogoPublico() {
       </div>}
     </div>
   )
+}
+
+function CatalogoPublico() {
+  try {
+    return <CatalogoPublicoApp supabase={createClient()} />
+  } catch (error) {
+    return (
+      <div className="state-screen">
+        <div className="state-card">
+          <span className="state-icon">!</span>
+          <h1>Conexión con Supabase no configurada</h1>
+          <p>{errorMessage(error, "Configura las variables de conexión del catálogo.")}</p>
+        </div>
+      </div>
+    )
+  }
 }
 
 createRoot(document.getElementById("root")!).render(<CatalogoPublico />)

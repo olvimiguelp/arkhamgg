@@ -5,3 +5,6 @@ release/
 *.asar
 **/.wwebjs_auth/
 **/.wwebjs_cache/
+catalogo-publico/.env
+catalogo-publico/.env.*
+!catalogo-publico/.env.example

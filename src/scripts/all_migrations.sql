@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-11-21 15:18:10 -04:00
+-- Generado: 2026-11-21 15:52:00 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -5573,10 +5573,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS catalog_customer_accounts_email_global_key
   ON public.catalog_customer_accounts(lower(email))
   WHERE email IS NOT NULL;
 
+-- ====================================================
+-- Source: 086-catalog-customer-catalog-auth.sql
+-- ====================================================
+
+REVOKE ALL PRIVILEGES ON FUNCTION public.get_public_catalog_snapshot(
+  TEXT, INTEGER, INTEGER, TEXT, TEXT, BOOLEAN
+) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.get_public_catalog_snapshot(
+  TEXT, INTEGER, INTEGER, TEXT, TEXT, BOOLEAN
+) TO service_role;
+
+GRANT EXECUTE ON FUNCTION public.catalog_storefront_sections(UUID)
+  TO service_role;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (88):
+-- Archivos concatenados (89):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -5665,3 +5680,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS catalog_customer_accounts_email_global_key
 --   - 082-catalog-storefront-publication.sql
 --   - 084-catalog-customer-email-registration.sql
 --   - 085-catalog-customer-email-global-unique.sql
+--   - 086-catalog-customer-catalog-auth.sql

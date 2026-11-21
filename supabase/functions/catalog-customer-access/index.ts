@@ -28,6 +28,10 @@ type RequestBody = {
   customer_phones?: string[]
   customer_name?: string
   offset?: number
+  limit?: number
+  search?: string
+  category?: string
+  include_categories?: boolean
   items?: unknown
 }
 
@@ -379,20 +383,26 @@ async function handleRequest(
       .select("id, name, phone, owner_admin_id, password_salt, password_hash")
       .eq("is_active", true)
     customerQuery = email ? customerQuery.eq("email", email) : customerQuery.eq("phone", phone)
-    const { data: customer, error } = await customerQuery
-      .maybeSingle()
+    const { data: customers, error } = await customerQuery
 
     if (error) throw new RequestError("No se pudo validar la cuenta", 503)
-    if (!customer) throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
+    if (!customers?.length) throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
 
-    const salt = base64UrlToBytes(customer.password_salt)
-    const expectedHash = base64UrlToBytes(customer.password_hash)
-    const actualHash = await derivePasswordHash(password, salt)
-    if (!equalBytes(actualHash, expectedHash)) {
-      throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
+    let matchedCustomer: NonNullable<typeof customers>[number] | null = null
+    for (const customer of customers) {
+      const salt = base64UrlToBytes(customer.password_salt)
+      const expectedHash = base64UrlToBytes(customer.password_hash)
+      const actualHash = await derivePasswordHash(password, salt)
+      if (equalBytes(actualHash, expectedHash)) {
+        if (matchedCustomer) {
+          throw new RequestError("Hay varias cuentas con ese teléfono y contraseña. Inicia sesión con tu correo.", 409)
+        }
+        matchedCustomer = customer
+      }
     }
+    if (!matchedCustomer) throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
 
-    return await startCustomerSession(supabase, customer)
+    return await startCustomerSession(supabase, matchedCustomer)
   }
 
   if (body.action === "session") {
@@ -405,6 +415,48 @@ async function handleRequest(
         owner_admin_id: customer.ownerAdminId,
       },
     }
+  }
+
+  if (body.action === "storefront") {
+    const customer = await resolveCustomerSession(supabase, body.session_token)
+    const { data: sections, error } = await supabase.rpc("catalog_storefront_sections", {
+      p_owner: customer.ownerAdminId,
+    })
+    if (error) throw new RequestError("No se pudieron cargar las secciones del catálogo", 503)
+    return { sections: sections ?? [] }
+  }
+
+  if (body.action === "catalog") {
+    const share = await requireActiveCatalogShare(supabase, body.token)
+    const customer = await resolveCustomerSession(supabase, body.session_token)
+    if (customer.ownerAdminId !== share.ownerAdminId) {
+      throw new RequestError("Este enlace no pertenece al administrador de tu cuenta", 403)
+    }
+
+    const limit = body.limit ?? 24
+    const offset = body.offset ?? 0
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new RequestError("El límite de productos no es válido", 400)
+    }
+    if (!Number.isInteger(offset) || offset < 0 || offset > 50_000) {
+      throw new RequestError("La página solicitada no es válida", 400)
+    }
+    const search = typeof body.search === "string" ? body.search.trim() : ""
+    const category = typeof body.category === "string" ? body.category.trim() : ""
+    if (search.length > 200 || category.length > 200) {
+      throw new RequestError("El filtro del catálogo es demasiado largo", 400)
+    }
+
+    const { data, error } = await supabase.rpc("get_public_catalog_snapshot", {
+      p_token: share.token,
+      p_limit: limit,
+      p_offset: offset,
+      p_search: search || null,
+      p_category: category || null,
+      p_include_categories: body.include_categories === true,
+    })
+    if (error) throw new RequestError(error.message || "No se pudo cargar el catálogo", 400)
+    return { snapshot: data }
   }
 
   if (body.action === "logout") {
