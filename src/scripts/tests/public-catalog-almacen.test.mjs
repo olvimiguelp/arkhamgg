@@ -357,6 +357,26 @@ try {
     customer_phone: '8095550111',
   })
 
+  // A legacy phone can have two owners. Deleting one account must not release the other's number.
+  await db.exec(await readFile(new URL('../084-catalog-customer-email-registration.sql', import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../085-catalog-customer-email-global-unique.sql', import.meta.url), 'utf8'))
+  await db.query("INSERT INTO employees(id) VALUES($1) ON CONFLICT DO NOTHING",[otherOwner])
+  const addAccount = (admin,phone,email) => db.query(`INSERT INTO catalog_customer_accounts
+    (owner_admin_id,name,phone,email,password_salt,password_hash) VALUES($1,'Test',$2,$3,'salt','hash') RETURNING id`,[admin,phone,email])
+  const legacyAccountId = (await addAccount(otherOwner,'8095550111','old@example.test')).rows[0].id
+  await db.exec(await readFile(new URL('../088-catalog-customer-unique-phone.sql', import.meta.url), 'utf8'))
+  await db.query("INSERT INTO catalog_customer_sessions(customer_id,token_hash,expires_at) VALUES($1,'test-session',now())",[accountId])
+  await db.query('DELETE FROM catalog_customer_accounts WHERE id=$1',[accountId])
+  assert.equal((await db.query('SELECT id FROM catalog_customer_sessions WHERE customer_id=$1',[accountId])).rows.length,0)
+  assert.equal((await db.query('SELECT catalog_customer_id FROM catalog_order_history WHERE sale_id=$1',[accountOrder.rows[0].id])).rows[0].catalog_customer_id,null)
+  await assert.rejects(addAccount(owner,'8095550111',null), {code:'23505'})
+  await assert.rejects(addAccount(owner,'8095550123',' OLD@example.test '), {code:'23505'})
+  await db.query('DELETE FROM catalog_customer_accounts WHERE id=$1',[legacyAccountId])
+  await addAccount(owner,'8095550111',null)
+  await assert.rejects(addAccount(otherOwner,'8095550111',null), {code:'23505'})
+  await db.query("UPDATE catalog_customer_accounts SET phone='8095550145' WHERE phone='8095550111'")
+  await addAccount(otherOwner,'8095550111',null)
+
   await order('wholesale', [{ id: battery, quantity: 1 }])
   assert.equal(await stock('products', battery), 19)
   assert.equal(await stock('armacen', battery), 7)

@@ -227,6 +227,8 @@ export default function EmpleadosPage() {
   const [catalogCustomerEmail, setCatalogCustomerEmail] = useState("")
   const [catalogCustomerPhone, setCatalogCustomerPhone] = useState("")
   const [catalogCustomerPassword, setCatalogCustomerPassword] = useState("")
+  const [deleteCatalogTarget, setDeleteCatalogTarget] = useState<CatalogCustomerDirectoryEntry | null>(null)
+  const [deletingCatalogAccount, setDeletingCatalogAccount] = useState(false)
   const [accessCustomer, setAccessCustomer] = useState<CatalogCustomerDirectoryEntry | null>(null)
   const [catalogDirectoryError, setCatalogDirectoryError] = useState("")
   const [catalogCustomers, setCatalogCustomers] = useState<CatalogCustomerAccount[]>([])
@@ -369,6 +371,25 @@ export default function EmpleadosPage() {
       })
     } finally {
       setIsLoadingCatalogCustomers(false)
+    }
+  }
+
+  const deleteCatalogAccount = async () => {
+    const id = deleteCatalogTarget?.accountId
+    if (!id || deletingCatalogAccount) return
+    setDeletingCatalogAccount(true)
+    try {
+      await invokeCatalogCustomerAccess({ action: "delete", customer_id: id, ...getCatalogStaffCredentials() })
+      setCatalogCustomers(current => current.filter(account => account.id !== id))
+      setCatalogBuyers(current => current.map(buyer => buyer.catalog_customer_id === id ? { ...buyer, catalog_customer_id: null } : buyer))
+      if (createdCatalogCredentials?.phone === deleteCatalogTarget?.phone) setCreatedCatalogCredentials(null)
+      setDeleteCatalogTarget(null)
+      toast({ title: "Cuenta del catálogo eliminada" })
+      await loadCatalogCustomerOverview()
+    } catch (error) {
+      toast({ title: "No se pudo eliminar la cuenta", description: error instanceof Error ? error.message : undefined, variant: "destructive" })
+    } finally {
+      setDeletingCatalogAccount(false)
     }
   }
 
@@ -1337,7 +1358,7 @@ export default function EmpleadosPage() {
           }
         }}
       >
-        <DialogContent className="mx-2 max-h-[90vh] w-[95vw] max-w-4xl overflow-y-auto sm:mx-0">
+        <DialogContent className="h-[85dvh] w-[85vw] max-w-none content-start overflow-y-auto sm:max-w-none">
           <DialogHeader>
             <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
             <DialogDescription>
@@ -1477,6 +1498,10 @@ export default function EmpleadosPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
+                            {canDeleteEmployees && customer.accountId && <Button type="button" size="sm" variant="outline" className="text-destructive"
+                              aria-label={`Eliminar cuenta de ${customer.name}`} onClick={() => setDeleteCatalogTarget(customer)}>
+                              <Trash2 className="mr-1 h-4 w-4" />Eliminar
+                            </Button>}
                             {isAdmin && customer.accountId && <Button size="sm" variant="outline" onClick={() => setAccessCustomer(customer)}>Categorías</Button>}
                             <Button
                               type="button"
@@ -1582,6 +1607,22 @@ export default function EmpleadosPage() {
             products={productCategoryOptions} />}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(deleteCatalogTarget)} onOpenChange={open => { if (!open && !deletingCatalogAccount) setDeleteCatalogTarget(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar la cuenta de {deleteCatalogTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>Se eliminará el acceso de {deleteCatalogTarget?.phone} y se cerrarán sus sesiones. Sus pedidos seguirán en el historial.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingCatalogAccount}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction disabled={deletingCatalogAccount} className="bg-destructive text-destructive-foreground"
+              onClick={event => {event.preventDefault(); void deleteCatalogAccount()}}>
+              {deletingCatalogAccount ? "Eliminando…" : "Eliminar cuenta"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={Boolean(accessCustomer)} onOpenChange={open => { if (!open) setAccessCustomer(null) }}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto">

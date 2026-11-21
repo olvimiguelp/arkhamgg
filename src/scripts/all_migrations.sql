@@ -5682,3 +5682,4 @@ GRANT EXECUTE ON FUNCTION public.catalog_storefront_sections(UUID)
 --   - 085-catalog-customer-email-global-unique.sql
 --   - 086-catalog-customer-catalog-auth.sql
 --   - 087-catalog-customer-permissions.sql
+--   - 088-catalog-customer-unique-phone.sql

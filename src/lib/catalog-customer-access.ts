@@ -48,6 +48,8 @@ type CreateAccountRequest = StaffCredentials & {
   password: string
 }
 
+type DeleteAccountRequest = StaffCredentials & { action: "delete"; customer_id: string }
+
 type OverviewRequest = StaffCredentials & {
   action: "overview"
 }
@@ -69,11 +71,12 @@ type CustomerHistoryResponse = {
 }
 
 export function invokeCatalogCustomerAccess(request: CreateAccountRequest): Promise<CreateAccountResponse>
+export function invokeCatalogCustomerAccess(request: DeleteAccountRequest): Promise<{ deleted: boolean }>
 export function invokeCatalogCustomerAccess(request: OverviewRequest): Promise<OverviewResponse>
 export function invokeCatalogCustomerAccess(request: CustomerHistoryRequest): Promise<CustomerHistoryResponse>
 export async function invokeCatalogCustomerAccess(
-  request: CreateAccountRequest | OverviewRequest | CustomerHistoryRequest,
-): Promise<CreateAccountResponse | OverviewResponse | CustomerHistoryResponse> {
+  request: CreateAccountRequest | DeleteAccountRequest | OverviewRequest | CustomerHistoryRequest,
+): Promise<CreateAccountResponse | OverviewResponse | CustomerHistoryResponse | { deleted: boolean }> {
   const { data, error } = await createClient().functions.invoke("catalog-customer-access", {
     body: request,
   })

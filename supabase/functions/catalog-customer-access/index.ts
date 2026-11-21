@@ -104,7 +104,7 @@ function requireText(value: unknown, label: string) {
 async function requireStaff(
   supabase: ReturnType<typeof createClient>,
   body: RequestBody,
-  action: "create" | "overview",
+  action: "create" | "overview" | "delete",
 ): Promise<StaffActor> {
   const actorId = requireText(body.actor_id, "El usuario empleado")
   const actorPassword = requireText(body.actor_password, "La contraseña del empleado")
@@ -127,7 +127,8 @@ async function requireStaff(
   const hasEmployeePage = isAdmin || permissions.employees === true
   const canCreate = isAdmin || (permissions.employees === true && permissions.canAdd === true)
 
-  if (!hasEmployeePage || (action === "create" && !canCreate)) {
+  const canDelete = isAdmin || permissions.canDelete === true
+  if (!hasEmployeePage || (action === "create" && !canCreate) || (action === "delete" && !canDelete)) {
     throw new RequestError("No tienes permiso para administrar usuarios del catálogo", 403)
   }
 
@@ -236,9 +237,22 @@ async function handleRequest(
       .select("id, name, email, phone, is_active, created_at")
       .single()
 
-    if (error?.code === "23505") throw new RequestError("Ya existe una cuenta con ese correo o teléfono", 409)
+    if (error?.code === "23505") {
+      const field = error.message.includes("email") ? "correo" : "teléfono"
+      throw new RequestError(`Ya existe una cuenta con ese ${field}.`, 409)
+    }
     if (error) throw new RequestError("No se pudo crear la cuenta del catálogo", 500)
     return { customer }
+  }
+
+  if (body.action === "delete") {
+    const actor = await requireStaff(supabase, body, "delete")
+    const id = requireText(body.customer_id, "La cuenta del cliente")
+    const { data, error } = await supabase.from("catalog_customer_accounts").delete()
+      .eq("owner_admin_id", actor.ownerAdminId).eq("id", id).select("id").maybeSingle()
+    if (error) throw new RequestError("No se pudo eliminar la cuenta del catálogo", 500)
+    if (!data) throw new RequestError("La cuenta ya no está disponible", 404)
+    return { deleted: true }
   }
 
   if (body.action === "overview") {
