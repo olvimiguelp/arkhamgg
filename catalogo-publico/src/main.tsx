@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
-import catalogLogo from "../../public/Logo festivo 049 Móvil con gorro de Santa.png"
+import catalogLogo from "./assets/catalog-logo.png"
 import { invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
 import { createClient } from "./lib/supabase/client"
 import "./styles.css"

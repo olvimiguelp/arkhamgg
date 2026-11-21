@@ -5236,3 +5236,6 @@ $$;
 --   - 078-public-catalog-product-scope.sql
 --   - 079-add-product-location-pair-fields.sql
 --   - 079-public-catalog-new-products.sql
+--   - 080-shared-catalog-categories.sql
+--   - 081-editable-catalog-links.sql
+--   - 082-catalog-storefront-publication.sql

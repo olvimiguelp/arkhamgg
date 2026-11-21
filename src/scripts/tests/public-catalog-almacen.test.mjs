@@ -95,6 +95,9 @@ try {
     await db.exec(sql)
   }
 
+  await db.exec(await readFile(new URL('../080-shared-catalog-categories.sql', import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../081-editable-catalog-links.sql', import.meta.url), 'utf8'))
+  await db.exec(await readFile(new URL('../082-catalog-storefront-publication.sql', import.meta.url), 'utf8'))
   const snapshot = async (token, search = null, category = null, offset = 0, limit = 24) =>
     (await db.query('SELECT get_public_catalog_snapshot($1,$2,$3,$4,$5,TRUE) AS data',
       [token, limit, offset, search, category])).rows[0].data
@@ -128,6 +131,93 @@ try {
   assert.deepEqual((await db.query("SELECT category FROM get_public_catalog_categories('normal')")).rows.map(r => r.category), ['Accesorios', 'Nueva'])
   assert.equal((await snapshot('normal')).products.length, 2)
   await order('normal', [{ id: screen, quantity: 1 }])
+  await db.exec('ROLLBACK')
+
+  await assert.rejects(db.query("SELECT manage_catalog_categories($1,'wrong',ARRAY['Hidden'])", [owner]))
+  await db.exec('BEGIN')
+  await db.query("SELECT manage_catalog_categories($1,'test-password',ARRAY['Fundas', 'fundas'])", [owner])
+  await db.exec(`INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter)
+    VALUES ('new-link','${owner}','armacen','pantallas'), ('other-link','${otherOwner}','products',NULL)`)
+  await db.query("SELECT manage_catalog_categories($1,'test-password',ARRAY['Fundas'],NULL,'armacen')", [owner])
+  for (const token of ['normal', 'wholesale', 'batteries', 'new-link']) {
+    const name = ['normal', 'wholesale'].includes(token) ? 'Fundas' : 'fundas'
+    const result = await snapshot(token)
+    assert.equal(result.categories.filter(c => c === name).length, 1)
+    assert.equal(result.category_filter, null)
+    assert.deepEqual((await snapshot(token, null, name)).products, [])
+  }
+  assert.equal((await snapshot('other-link')).categories.includes('Fundas'), false)
+  const added = await db.query(`INSERT INTO armacen(id, owner_admin_id, sku, name, category, stock, sell_price)
+    VALUES (gen_random_uuid(), '${owner}', 'NEW', 'Base', 'Bases', 4, 10) RETURNING id`)
+  assert.deepEqual((await snapshot('batteries', null, 'bases')).products, [])
+  await db.query("SELECT manage_catalog_categories($1,'test-password',ARRAY['Bases'],NULL,'armacen')", [owner])
+  await db.exec(`INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter)
+    VALUES ('future-link','${owner}','armacen','pantallas')`)
+  for (const token of ['new-link', 'batteries', 'future-link']) {
+    assert.deepEqual((await snapshot(token, null, 'bases')).products.map(p => p.id), [added.rows[0].id])
+    await order(token, [{ id: added.rows[0].id, quantity: 1 }])
+  }
+  await db.query("SELECT manage_catalog_categories($1,'test-password','{}','Fundas')", [owner])
+  assert.equal((await snapshot('normal')).categories.includes('Fundas'), false)
+  await db.exec('ROLLBACK')
+
+  await db.exec('BEGIN')
+  await db.exec(`INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter, individual_categories, product_ids)
+    SELECT label, '${owner}', 'armacen', 'json:["baterias","pantallas"]', true, ARRAY['${battery}'::uuid,'${screen}'::uuid]
+    FROM unnest(ARRAY['customer-one','customer-two']) label;
+    INSERT INTO armacen(id,owner_admin_id,sku,name,category,stock,sell_price,created_at)
+    VALUES (gen_random_uuid(),'${owner}','FX-1','Flex A','flex',5,100,'2000-01-01')`)
+  const extend = (token, categories, actor = owner, password = 'test-password') => db.query(
+    'SELECT extend_warehouse_catalog_link($1,$2,$3,$4) AS categories', [actor, password, token, categories])
+  await db.query("SELECT manage_catalog_categories($1,'test-password',ARRAY['flex'],NULL,'armacen')", [owner])
+  assert.deepEqual((await snapshot('customer-one')).categories, ['baterias','pantallas'])
+  assert.deepEqual((await extend('customer-one', ['flex'])).rows[0].categories, ['baterias','flex','pantallas'])
+  await extend('customer-one', ['flex'])
+  assert.deepEqual((await snapshot('customer-one')).categories, ['baterias','flex','pantallas'])
+  assert.deepEqual((await snapshot('customer-two')).categories, ['baterias','pantallas'])
+  const flexProduct = (await snapshot('customer-one',null,'flex')).products[0]
+  assert.equal(flexProduct.name,'Flex A')
+  await order('customer-one',[{id:flexProduct.id,quantity:1}])
+  await db.exec('ROLLBACK')
+  await assert.rejects(extend('batteries',['flex'],owner,'wrong'))
+  await assert.rejects(extend('normal',['flex']))
+
+  await db.exec('BEGIN')
+  const publish = async (kind, categories, home, visible = true) =>
+    (await db.query("SELECT configure_catalog_publication($1,'test-password',$2,$3,$4,$5) AS token",
+      [owner, kind, categories, home, visible])).rows[0].token
+  const homepage = async () => (await db.query('SELECT * FROM catalog_storefront_sections($1)', [owner])).rows
+  const individual = await publish('warehouse',['baterias'],false)
+  const saveHome = rules => db.query("SELECT save_catalog_storefront($1,'test-password',$2::jsonb)", [owner, JSON.stringify(rules)])
+  await saveHome({normal:[],wholesale:[],warehouse:[]})
+  const sections = await homepage()
+  assert.deepEqual(sections.map(x => x.kind),['normal','wholesale','warehouse'])
+  assert.equal((await snapshot(sections[0].token)).products[0].sell_price,300)
+  assert.equal((await snapshot(sections[1].token)).products[0].sell_price,250)
+  assert.deepEqual((await snapshot(sections[2].token)).products.map(p=>p.id).sort(),[battery,screen,custom,unavailable].sort())
+  assert.deepEqual((await snapshot(individual)).categories,['baterias'])
+  for (const kind of ['normal','wholesale']) {
+    const link = await publish(kind,['Fundas'],false)
+    assert.deepEqual((await snapshot(link)).products,[])
+    assert.deepEqual((await db.query('SELECT * FROM get_public_catalog_products($1)',[link])).rows,[])
+    await db.exec('SAVEPOINT order_denied')
+    await assert.rejects(order(link,[{id:battery,quantity:1}]))
+    await db.exec('ROLLBACK TO SAVEPOINT order_denied')
+    await db.query("SELECT manage_customer_catalog($1,'test-password',$2,ARRAY['Accesorios'])",[owner,link])
+    assert.deepEqual((await snapshot(link)).products.map(p=>p.id),[battery])
+  }
+  await publish('warehouse',['pantallas'],true)
+  assert.deepEqual((await snapshot(sections[2].token)).products.map(p=>p.id),[screen])
+  assert.deepEqual((await snapshot(individual)).categories,['baterias'])
+  await publish('wholesale',[],true,false)
+  assert.equal((await homepage()).length,2)
+  await saveHome({normal:null,wholesale:null,warehouse:null})
+  assert.deepEqual(await homepage(),[])
+  assert.deepEqual((await snapshot(individual)).categories,['baterias'])
+  await db.exec('SAVEPOINT invalid_home')
+  await assert.rejects(saveHome({normal:[],wholesale:[]}))
+  await db.exec('ROLLBACK TO SAVEPOINT invalid_home')
+  assert.deepEqual(await homepage(),[])
   await db.exec('ROLLBACK')
 
   // Exercise the real RPCs, including both catalog sources and legacy clients.

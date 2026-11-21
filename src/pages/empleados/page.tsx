@@ -55,8 +55,7 @@ import {
   ArrowLeft,
 } from "lucide-react"
 import { useSystemConfig } from "@/hooks/use-system-config"
-import { getPublicCatalogUrl, savePublicCatalogUrl } from "@/lib/public-catalog-url"
-import { getOrCreatePublicCatalogShare, type PublicCatalogSource } from "@/lib/public-catalog-share"
+import { CatalogPublication } from "@/components/catalog-publication"
 import {
   invokeCatalogCustomerAccess,
   type CatalogCustomerAccount,
@@ -219,14 +218,7 @@ export default function EmpleadosPage() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [showPassword, setShowPassword] = useState(false)
-  const [publicCatalogLink, setPublicCatalogLink] = useState("")
-  const [publicCatalogType, setPublicCatalogType] = useState<"normal" | "wholesale">("normal")
   const [isPublicCatalogDialogOpen, setIsPublicCatalogDialogOpen] = useState(false)
-  const [isCreatingPublicCatalog, setIsCreatingPublicCatalog] = useState(false)
-  const [publicCatalogSource, setPublicCatalogSource] = useState<PublicCatalogSource>("products")
-  const [publicCatalogCategories, setPublicCatalogCategories] = useState<string[]>([])
-  const [isAlmacenCatalogDialogOpen, setIsAlmacenCatalogDialogOpen] = useState(false)
-  const [selectedAlmacenCategories, setSelectedAlmacenCategories] = useState<string[]>([])
   const [isCatalogCustomerDialogOpen, setIsCatalogCustomerDialogOpen] = useState(false)
   const [catalogCustomerView, setCatalogCustomerView] = useState<"customers" | "history">("customers")
   const [selectedCatalogCustomerKey, setSelectedCatalogCustomerKey] = useState<string | null>(null)
@@ -263,6 +255,17 @@ export default function EmpleadosPage() {
       accountsByKey.set(key, customer)
       const phone = normalizeCatalogCustomerPhone(customer.phone)
       if (phone) phoneKeys.set(phone, key)
+      entries.set(key, {
+        key,
+        accountId: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        phoneVariants: [customer.phone],
+        isActive: customer.is_active,
+        createdAt: customer.created_at,
+        orderCount: 0,
+        lastOrderAt: null,
+      })
     })
 
     catalogBuyers.forEach((buyer) => {
@@ -272,14 +275,19 @@ export default function EmpleadosPage() {
         (phone && phoneKeys.get(phone)) ||
         `guest:${phone || buyer.customer_name.trim().toLowerCase()}`
       const account = accountsByKey.get(key)
+      const existing = entries.get(key)
       entries.set(key, {
         key,
         accountId: account?.id ?? buyer.catalog_customer_id,
-        name: account?.name ?? buyer.customer_name,
-        phone: account?.phone ?? buyer.customer_phone,
-        phoneVariants: Array.from(new Set([account?.phone ?? "", ...buyer.customer_phones].filter(Boolean))),
-        isActive: account?.is_active ?? null,
-        createdAt: account?.created_at ?? null,
+        name: account?.name ?? existing?.name ?? buyer.customer_name,
+        phone: account?.phone ?? existing?.phone ?? buyer.customer_phone,
+        phoneVariants: Array.from(new Set([
+          account?.phone ?? "",
+          existing?.phone ?? "",
+          ...buyer.customer_phones,
+        ].filter(Boolean))),
+        isActive: account?.is_active ?? existing?.isActive ?? null,
+        createdAt: account?.created_at ?? existing?.createdAt ?? null,
         orderCount: buyer.order_count,
         lastOrderAt: buyer.last_order_at,
       })
@@ -301,7 +309,7 @@ export default function EmpleadosPage() {
   }, [catalogOrderHistory, selectedCatalogCustomer])
 
   const { config: systemConfig, loading: systemConfigLoading } = useSystemConfig({
-    keys: ["whatsapp_support_link", "whatsapp_support_access", "public_catalog_url"],
+    keys: ["whatsapp_support_link", "whatsapp_support_access"],
   })
 
   const supportAccessConfig = systemConfig?.whatsapp_support_access
@@ -464,79 +472,6 @@ export default function EmpleadosPage() {
     const activeAdmins = employees.filter((employee) => employee.role === "admin" && employee.status === "active")
     return activeAdmins[0] ?? employees.find((employee) => employee.role === "admin") ?? null
   }, [employees])
-
-  const createPublicCatalogLink = async (
-    priceMode: "normal" | "wholesale",
-    sourceTable: PublicCatalogSource = "products",
-    selectedCategories: string[] = [],
-  ) => {
-    const categories = [...new Set(selectedCategories)].sort()
-    if (sourceTable === "armacen" && categories.length === 0) return
-    const categoryFilter = categories.length > 1 ? `json:${JSON.stringify(categories)}` : categories[0] || ""
-    const ownerAdminId = String(currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "").trim()
-    if (!ownerAdminId) return
-    setIsCreatingPublicCatalog(true)
-    let token = ""
-    const showCatalogLink = (url: string) => {
-      setPublicCatalogType(priceMode)
-      setPublicCatalogSource(sourceTable)
-      setPublicCatalogCategories(categories)
-      setPublicCatalogLink(url)
-      setIsAlmacenCatalogDialogOpen(false)
-      setIsPublicCatalogDialogOpen(true)
-    }
-    try {
-      const configuredCatalogUrl = typeof systemConfig?.public_catalog_url === "string"
-        ? systemConfig.public_catalog_url
-        : String(systemConfig?.public_catalog_url?.url || "")
-      const catalogProducts = products.filter((product) => {
-        const isAlmacen = product.sourceTable ? product.sourceTable === "armacen" :
-          Boolean(product.boxNumber) || isAlmacenCategory(product.category)
-        return sourceTable === "armacen"
-          ? isAlmacen && categories.includes(getAlmacenCategoryFilterValue(product.category))
-          : !isAlmacen
-      })
-      const productIds = catalogProducts
-        .map((product) => String(product.sourceId || product.id).replace(/^(products|armacen)::/, ""))
-        .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
-      
-      token = await getOrCreatePublicCatalogShare({
-        ownerAdminId,
-        priceMode,
-        sourceTable,
-        categoryFilter,
-        productIds,
-        businessName: adminContact?.name || "Catálogo de productos",
-      })
-      showCatalogLink(getPublicCatalogUrl(token, configuredCatalogUrl))
-    } catch (error) {
-      console.error("Error creating public catalog link:", error)
-      const isMissingDesktopUrl = window.location.protocol === "file:" &&
-        String((error as { message?: string })?.message || "").includes("VITE_PUBLIC_CATALOG_URL")
-
-      if (isMissingDesktopUrl) {
-        const enteredUrl = window.prompt(
-          "Pega la URL pública donde está publicado el catálogo (ejemplo: https://tu-dominio.com/catalogo-publico/):",
-          "https://",
-        )?.trim() || ""
-
-        try {
-          const parsedUrl = new URL(enteredUrl)
-          if (parsedUrl.protocol !== "https:") throw new Error("URL no válida")
-          savePublicCatalogUrl(enteredUrl)
-          showCatalogLink(getPublicCatalogUrl(token, enteredUrl))
-          return
-        } catch {
-          toast({ title: "URL no válida", description: "Debes introducir una URL pública que empiece por https://.", variant: "destructive" })
-          return
-        }
-      }
-
-      toast({ title: "No se pudo crear el enlace", description: `${(error as { message?: string })?.message || "Verifica que la migración del catálogo público esté aplicada."}`, variant: "destructive" })
-    } finally {
-      setIsCreatingPublicCatalog(false)
-    }
-  }
 
   const [formData, setFormData] = useState({
     name: "",
@@ -929,8 +864,8 @@ export default function EmpleadosPage() {
               <Users className="mr-2 h-4 w-4" />
               Clientes catálogo
             </Button>}
-            <Button variant="outline" onClick={() => { setPublicCatalogLink(""); setIsPublicCatalogDialogOpen(true) }} disabled={isCreatingPublicCatalog} className="min-h-11">
-              {isCreatingPublicCatalog ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+            <Button variant="outline" onClick={() => setIsPublicCatalogDialogOpen(true)} className="min-h-11">
+              <Share2 className="mr-2 h-4 w-4" />
               Compartir catálogo
             </Button>
             {canAddEmployees && <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -1386,7 +1321,7 @@ export default function EmpleadosPage() {
           <DialogHeader>
             <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
             <DialogDescription>
-              Selecciona un cliente que haya pedido por el catálogo para consultar su historial. Las compras de invitados se agrupan por teléfono.
+              Usa un solo enlace compartido del catálogo para todos los clientes. Cada cliente inicia sesión con su teléfono y contraseña; las cuentas exclusivas aparecen aquí aunque todavía no hayan realizado pedidos.
             </DialogDescription>
           </DialogHeader>
 
@@ -1602,52 +1537,12 @@ export default function EmpleadosPage() {
       </Dialog>
 
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
-        <DialogContent className="w-[95vw] max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>{!publicCatalogLink ? "Compartir catálogo" : publicCatalogSource === "armacen" ? `Almacén: ${publicCatalogCategories.map(getAlmacenCategoryLabel).join(", ")}` : publicCatalogType === "wholesale" ? "Catálogo por mayor listo" : "Catálogo normal listo"}</DialogTitle>
-            <DialogDescription>{publicCatalogLink ? "Comparte este enlace con tu cliente. No necesita iniciar sesión y sus productos llegarán a Cola Exclusiva. Este enlace es permanente mientras el catálogo permanezca activo." : "Elige el catálogo que deseas compartir. Para el almacén, selecciona la categoría que verá tu cliente."}</DialogDescription>
-          </DialogHeader>
-          {publicCatalogLink && <div className="flex gap-2">
-            <Input readOnly value={publicCatalogLink} />
-            <Button size="icon" onClick={() => { void navigator.clipboard.writeText(publicCatalogLink); toast({ title: "Enlace copiado" }) }}><Copy className="h-4 w-4" /></Button>
-          </div>}
-          <DialogFooter className="flex flex-wrap gap-2">
-            <Button onClick={() => void createPublicCatalogLink("normal")} disabled={isCreatingPublicCatalog}>Catálogo normal</Button>
-            <Button onClick={() => void createPublicCatalogLink("wholesale")} disabled={isCreatingPublicCatalog}>Catálogo por mayor</Button>
-            <Button onClick={() => { setSelectedAlmacenCategories([]); setIsPublicCatalogDialogOpen(false); setIsAlmacenCatalogDialogOpen(true) }} disabled={isCreatingPublicCatalog}>Almacén</Button>
-          </DialogFooter>
-          {isCreatingPublicCatalog && <p role="status" className="text-sm text-muted-foreground">Generando enlace…</p>}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isAlmacenCatalogDialogOpen} onOpenChange={setIsAlmacenCatalogDialogOpen}>
-        <DialogContent className="w-[95vw] max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>¿Qué categoría del almacén deseas mostrar?</DialogTitle>
-            <DialogDescription>Marca una o varias categorías. El enlace mostrará únicamente esos productos.</DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[50vh] space-y-3 overflow-y-auto py-1">
-            {almacenCatalogCategories.map(({ value, label }) => (
-              <label key={value} className="flex cursor-pointer items-center gap-3 rounded-md border p-3">
-                <Checkbox
-                  checked={selectedAlmacenCategories.includes(value)}
-                  disabled={isCreatingPublicCatalog}
-                  onCheckedChange={(checked) => setSelectedAlmacenCategories((current) =>
-                    checked === true
-                      ? [...new Set([...current, value])]
-                      : current.filter((category) => category !== value),
-                  )}
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" disabled={isCreatingPublicCatalog} onClick={() => { setIsAlmacenCatalogDialogOpen(false); setIsPublicCatalogDialogOpen(true) }}>Volver</Button>
-            <Button disabled={!selectedAlmacenCategories.length || isCreatingPublicCatalog} onClick={() => void createPublicCatalogLink("normal", "armacen", selectedAlmacenCategories)}>
-              {isCreatingPublicCatalog && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Crear enlace
-            </Button>
-          </DialogFooter>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Compartir catálogo</DialogTitle></DialogHeader>
+          {isPublicCatalogDialogOpen && <CatalogPublication isAdmin={isAdmin} ownerId={currentUser?.id || ""}
+            credentials={getCatalogStaffCredentials} warehouse={almacenCatalogCategories}
+            products={Array.from(new Set(products.filter(p => p.sourceTable ? p.sourceTable === "products" :
+              !p.boxNumber && !isAlmacenCategory(p.category)).map(p => p.category).filter(Boolean))).sort().map(value => ({value,label:value}))} />}
         </DialogContent>
       </Dialog>
 

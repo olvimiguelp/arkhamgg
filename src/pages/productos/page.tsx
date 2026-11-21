@@ -51,7 +51,9 @@ import { useDraggableScroll } from "@/hooks/use-draggable-scroll"
 import { normalizeAlmacenBoxNumber } from "@/lib/almacen"
 import { normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
 import { createProductImageThumbnailFromUrl, deleteProductImageFromStorage, isProductImageStorageUrl, uploadProductImageToStorage } from "@/lib/product-image-storage"
+import { createClient } from "@/lib/supabase/client"
 import { getTenantBranding } from "@/lib/tenant-branding"
+import { getPublicCatalogUrl } from "@/lib/public-catalog-url"
 import { getOrCreatePublicCatalogShare } from "@/lib/public-catalog-share"
 
 // Reusing the Product interface and Store logic since it's the same data source
@@ -156,6 +158,7 @@ export default function ProductsPage() {
   const [pdfReportType, setPdfReportType] = useState<"low" | "stop" | "total">("low")
   const [pdfCategoryFilter, setPdfCategoryFilter] = useState<string[]>([])
   const [managedCategories, setManagedCategories] = useState<string[]>([])
+  const [categoryBusy, setCategoryBusy] = useState(false)
   const [newCategory, setNewCategory] = useState("")
   const [catalogOptions, setCatalogOptions] = useState({
     images: true,
@@ -223,8 +226,7 @@ export default function ProductsPage() {
         productIds,
         businessName: tenantBusinessName,
       })
-      const link = `${window.location.origin}/catalogo-publico/?token=${token}`
-      setPublicCatalogLink(link)
+      setPublicCatalogLink(getPublicCatalogUrl(token))
       setIsPublicCatalogDialogOpen(true)
     } catch (error) {
       console.error("Error creating public catalog link:", error)
@@ -418,18 +420,18 @@ export default function ProductsPage() {
     setFilterStockStatus("all")
   }
 
-  const handleAddCategory = () => {
+  const handleAddCategory = async () => {
     const category = newCategory.trim()
     if (!category) return
     if (categories.some((value) => value.toLowerCase() === category.toLowerCase())) {
       toast({ title: "Categoría existente", description: "Esa categoría ya está registrada." })
       return
     }
-    persistManagedCategories([...managedCategories, category])
+    if (!canAddProducts || categoryBusy || !await saveCategoryChanges([category])) return
     setNewCategory("")
   }
 
-  const handleDeleteCategory = (category: string) => {
+  const handleDeleteCategory = async (category: string) => {
     if (catalogProducts.some((product) => product.category === category)) {
       toast({
         title: "Categoría en uso",
@@ -438,7 +440,7 @@ export default function ProductsPage() {
       })
       return
     }
-    persistManagedCategories(managedCategories.filter((value) => value !== category))
+    if (categoryBusy || !await saveCategoryChanges([], category)) return
     setPdfCategoryFilter((selected) => selected.filter((value) => value !== category))
   }
 
@@ -575,20 +577,55 @@ export default function ProductsPage() {
     closeLabelDialog()
   }
 
-  useEffect(() => {
-    const storageKey = `product-categories-${currentUser?.adminId ?? currentUser?.ownerAdminId ?? "default"}`
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || "[]")
-      setManagedCategories(Array.isArray(saved) ? saved.filter((value): value is string => typeof value === "string") : [])
-    } catch {
-      setManagedCategories([])
-    }
-  }, [currentUser?.adminId, currentUser?.ownerAdminId])
+  const staffId = currentUser?.id
+  const staffPassword = employees.find((employee) => employee.id === staffId)?.password
+  const categoryOwnerId = currentUser?.adminId || currentUser?.ownerAdminId || staffId
+  const syncCategories = useCallback(async (addNames: string[], removeName?: string) => {
+    if (!staffId || !staffPassword) throw new Error("Vuelve a iniciar sesión para gestionar categorías.")
+    const { data, error } = await createClient().rpc("manage_catalog_categories", {
+      actor_id: staffId, actor_password: staffPassword, add_names: addNames, remove_name: removeName ?? null,
+    })
+    if (error) throw new Error(error.message)
+    return data as string[]
+  }, [staffId, staffPassword])
 
-  const persistManagedCategories = (nextCategories: string[]) => {
-    const storageKey = `product-categories-${currentUser?.adminId ?? currentUser?.ownerAdminId ?? "default"}`
-    setManagedCategories(nextCategories)
-    localStorage.setItem(storageKey, JSON.stringify(nextCategories))
+  useEffect(() => {
+    setManagedCategories([])
+    if (!categoryOwnerId || !staffPassword) return
+    let active = true
+    const storageKey = `product-categories-${categoryOwnerId}`
+    async function loadCategories() {
+      setCategoryBusy(true)
+      try {
+        const raw = canAddProducts ? localStorage.getItem(storageKey) : null
+        let legacy: unknown
+        try { legacy = JSON.parse(raw || "[]") } catch { legacy = [] }
+        const names = await syncCategories(Array.isArray(legacy) ? legacy.filter((v) => typeof v === "string") : [])
+        if (active) {
+          setManagedCategories(names)
+          if (raw) localStorage.removeItem(storageKey)
+        }
+      } catch (error) {
+        if (active) toast({ title: "No se pudieron cargar las categorías", description: error instanceof Error ? error.message : undefined, variant: "destructive" })
+      } finally {
+        if (active) setCategoryBusy(false)
+      }
+    }
+    void loadCategories()
+    return () => { active = false }
+  }, [categoryOwnerId, staffPassword, syncCategories, canAddProducts, toast])
+
+  async function saveCategoryChanges(addNames: string[], removeName?: string) {
+    setCategoryBusy(true)
+    try {
+      setManagedCategories(await syncCategories(addNames, removeName))
+      return true
+    } catch (error) {
+      toast({ title: "No se pudo guardar la categoría", description: error instanceof Error ? error.message : undefined, variant: "destructive" })
+      return false
+    } finally {
+      setCategoryBusy(false)
+    }
   }
 
   // Unique categories from products plus categories created but not yet used.
@@ -1418,7 +1455,7 @@ export default function ProductsPage() {
                 onKeyDown={(event) => event.key === "Enter" && handleAddCategory()}
                 placeholder="Nueva categoría"
               />
-              <Button onClick={handleAddCategory} className="shrink-0">
+              <Button disabled={categoryBusy || !canAddProducts} onClick={handleAddCategory} className="shrink-0">
                 <Plus className="mr-2 h-4 w-4" />
                 Agregar
               </Button>
@@ -1439,7 +1476,7 @@ export default function ProductsPage() {
                         variant="ghost"
                         size="icon"
                         className="shrink-0 text-destructive hover:text-destructive"
-                        disabled={inUse}
+                        disabled={inUse || categoryBusy || !canDeleteProducts}
                         onClick={() => handleDeleteCategory(category)}
                         title={inUse ? "No se puede eliminar una categoría en uso" : "Eliminar categoría"}
                       >

@@ -55,33 +55,36 @@ export async function getOrCreatePublicCatalogShare({
     throw new Error("El catálogo contiene productos que no pertenecen a esta empresa. Recarga los productos e inténtalo de nuevo.")
   }
 
-  let lookup = supabase
-    .from("catalog_shares")
-    .select("id, token")
-    .eq("owner_admin_id", ownerAdminId)
-    .eq("price_mode", priceMode)
-    .eq("source_table", sourceTable)
-    .eq("active", true)
-    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
-  lookup = category ? lookup.eq("category_filter", category) : lookup.is("category_filter", null)
-  const { data: existing, error: lookupError } = await lookup
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (lookupError) throw lookupError
-  if (existing?.token) {
-    const { error: updateError } = await supabase
+  if (sourceTable === "products") {
+    const lookup = supabase
       .from("catalog_shares")
-      .update({ product_ids: requestedProductIds, business_name: businessName })
-      .eq("id", existing.id)
+      .select("id, token")
       .eq("owner_admin_id", ownerAdminId)
+      .eq("price_mode", priceMode)
+      .eq("source_table", sourceTable)
+      .eq("active", true)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+      .is("category_filter", null)
+      .is("catalog_categories", null)
+    const { data: existing, error: lookupError } = await lookup
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
 
-    if (updateError) throw updateError
-    return existing.token
+    if (lookupError) throw lookupError
+    if (existing?.token) {
+      const { error: updateError } = await supabase
+        .from("catalog_shares")
+        .update({ product_ids: requestedProductIds, business_name: businessName })
+        .eq("id", existing.id)
+        .eq("owner_admin_id", ownerAdminId)
+
+      if (updateError) throw updateError
+      return existing.token
+    }
   }
 
-  const token = crypto.randomUUID().replaceAll("-", "")
+  const token = crypto.randomUUID().replace(/-/g, "")
   const { error: createError } = await supabase.from("catalog_shares").insert({
     token,
     owner_admin_id: ownerAdminId,
@@ -89,6 +92,7 @@ export async function getOrCreatePublicCatalogShare({
     price_mode: priceMode,
     source_table: sourceTable,
     category_filter: category,
+    ...(sourceTable === "armacen" ? { individual_categories: true } : {}),
     business_name: businessName,
     active: true,
   })
