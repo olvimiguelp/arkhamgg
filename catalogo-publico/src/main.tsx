@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import catalogLogo from "./assets/catalog-logo.png"
-import { invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
+import { InvalidCatalogSessionError, invokeCatalogCustomerAccess } from "./lib/catalog-customer-access"
 import { createClient } from "./lib/supabase/client"
 import "./styles.css"
 
@@ -166,6 +166,8 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
   const [loginIdentifier, setLoginIdentifier] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
   const [authLoading, setAuthLoading] = useState(false)
+  const [restoreState, setRestoreState] = useState<"checking" | "ready" | "retry">("checking")
+  const [restoreAttempt, setRestoreAttempt] = useState(0)
   const [authMessage, setAuthMessage] = useState("")
   const [sourceTable, setSourceTable] = useState<CatalogSnapshot["source_table"]>()
   const [loading, setLoading] = useState(false)
@@ -194,6 +196,21 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
   }, [done])
 
   useEffect(() => {
+    const syncSession = (event: StorageEvent) => {
+      if (event.key === CUSTOMER_SESSION_STORAGE_KEY && event.oldValue !== event.newValue) window.location.reload()
+    }
+    window.addEventListener("storage", syncSession)
+    return () => window.removeEventListener("storage", syncSession)
+  }, [])
+
+  useEffect(() => {
+    if (restoreState !== "retry") return
+    const retry = () => setRestoreAttempt(attempt => attempt + 1)
+    window.addEventListener("online", retry)
+    return () => window.removeEventListener("online", retry)
+  }, [restoreState])
+
+  useEffect(() => {
     let cancelled = false
     let sessionToken = ""
     let sessionVerified = false
@@ -209,8 +226,12 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
       setAuthMessage("No se pudo recuperar tu sesión guardada. Inicia sesión nuevamente.")
     }
 
-    if (!sessionToken) return
+    if (!sessionToken) {
+      setRestoreState("ready")
+      return
+    }
 
+    setRestoreState("checking")
     setAuthLoading(true)
     void (async () => {
       try {
@@ -229,6 +250,7 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
         sessionVerified = true
         if (cancelled) return
 
+        setRestoreState("ready")
         setCustomerSession({
           sessionToken,
           ownerAdminId: customer.owner_admin_id,
@@ -248,7 +270,8 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
         setMessage("")
       } catch (error) {
         if (cancelled) return
-        if (!sessionVerified) {
+        if (!sessionVerified && error instanceof InvalidCatalogSessionError) {
+          setRestoreState("ready")
           try {
             window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY)
           } catch (storageError) {
@@ -256,6 +279,8 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
           }
           setCustomerSession(null)
           setAuthMessage(errorMessage(error, "Inicia sesión nuevamente para usar tu cuenta."))
+        } else if (!sessionVerified) {
+          setRestoreState("retry")
         } else {
           setMessage(errorMessage(error, "No se pudo cargar el catálogo de tu administrador."))
         }
@@ -267,7 +292,7 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
     return () => {
       cancelled = true
     }
-  }, [requestedToken, supabase])
+  }, [requestedToken, supabase, restoreAttempt])
 
   useEffect(() => {
     if (!token || !customerSession) return
@@ -504,9 +529,6 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
         action: "logout",
         session_token: customerSession.sessionToken,
       })
-    } catch (error) {
-      setAuthMessage(errorMessage(error, "No se pudo cerrar la sesión en el servidor."))
-    } finally {
       try {
         window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY)
         if (token) window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
@@ -521,6 +543,11 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
       setStorefrontSections([])
       setCatalogReady(false)
       setMessage("")
+    } catch (error) {
+      const description = errorMessage(error, "No se pudo cerrar la sesión. Comprueba tu conexión y vuelve a pulsar Salir.")
+      setAuthMessage(description)
+      setMessage(description)
+    } finally {
       setAuthLoading(false)
     }
   }
@@ -561,6 +588,15 @@ function CatalogoPublicoApp({ supabase }: { supabase: ReturnType<typeof createCl
     } finally {
       setSending(false)
     }
+  }
+
+  if (!customerSession && restoreState !== "ready") {
+    return <div className="state-screen"><div className="state-card" role="status">
+      {restoreState === "checking" ? <p>Recuperando tu sesión…</p> : <>
+        <p>No se pudo conectar con el catálogo. Tu sesión sigue guardada en este navegador.</p>
+        <button className="submit-button" onClick={() => setRestoreAttempt(attempt => attempt + 1)}>Reintentar</button>
+      </>}
+    </div></div>
   }
 
   if (!customerSession) {

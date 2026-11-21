@@ -377,6 +377,15 @@ try {
   await db.query("UPDATE catalog_customer_accounts SET phone='8095550145' WHERE phone='8095550111'")
   await addAccount(otherOwner,'8095550111',null)
 
+  await db.exec(`INSERT INTO catalog_customer_sessions(customer_id,token_hash,expires_at,revoked_at)
+    SELECT a.id,v.token_hash,v.expiry,v.revoked FROM catalog_customer_accounts a CROSS JOIN
+      (VALUES ('live',now()+interval '1 day',NULL::timestamptz),('expired',now()-interval '1 day',NULL),
+              ('revoked',now()+interval '1 day',now())) v(token_hash,expiry,revoked)
+    WHERE a.phone='8095550145'`)
+  await db.exec(await readFile(new URL('../089-persistent-customer-sessions.sql', import.meta.url), 'utf8'))
+  assert.deepEqual((await db.query("SELECT token_hash FROM catalog_customer_sessions WHERE expires_at='infinity' ORDER BY token_hash")).rows,
+    [{token_hash:'live'}])
+
   await order('wholesale', [{ id: battery, quantity: 1 }])
   assert.equal(await stock('products', battery), 19)
   assert.equal(await stock('armacen', battery), 7)

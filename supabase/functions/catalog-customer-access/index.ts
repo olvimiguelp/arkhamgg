@@ -4,7 +4,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0"
 const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? ""
 const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
 const passwordIterations = 210_000
-const sessionLifetimeDays = 30
 const encoder = new TextEncoder()
 
 const corsHeaders = {
@@ -48,7 +47,7 @@ type CustomerSession = {
 }
 
 class RequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string) {
     super(message)
   }
 }
@@ -163,7 +162,7 @@ async function resolveCustomerSession(
     .maybeSingle()
 
   if (sessionError) throw new RequestError("No se pudo validar la sesión del cliente", 503)
-  if (!session) throw new RequestError("La sesión venció. Inicia sesión nuevamente.", 401)
+  if (!session) throw new RequestError("La sesión venció. Inicia sesión nuevamente.", 401, "session_invalid")
 
   const { data: customer, error: customerError } = await supabase
     .from("catalog_customer_accounts")
@@ -173,7 +172,7 @@ async function resolveCustomerSession(
     .maybeSingle()
 
   if (customerError) throw new RequestError("No se pudo validar la cuenta del cliente", 503)
-  if (!customer) throw new RequestError("La cuenta no está disponible", 403)
+  if (!customer) throw new RequestError("La cuenta no está disponible", 403, "session_invalid")
 
   return {
     id: customer.id,
@@ -188,17 +187,16 @@ async function startCustomerSession(
   customer: { id: string; name: string; phone: string; owner_admin_id: string },
 ) {
   const sessionToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))
-  const expiresAt = new Date(Date.now() + sessionLifetimeDays * 24 * 60 * 60 * 1000).toISOString()
   const { error } = await supabase.from("catalog_customer_sessions").insert({
     customer_id: customer.id,
     token_hash: await sha256Hex(sessionToken),
-    expires_at: expiresAt,
+    expires_at: "infinity",
   })
   if (error) throw new RequestError("No se pudo iniciar la sesión del cliente", 500)
 
   return {
     session_token: sessionToken,
-    expires_at: expiresAt,
+    expires_at: null,
     customer: {
       id: customer.id,
       name: customer.name,
@@ -508,7 +506,7 @@ serve(async (request) => {
   try {
     return jsonResponse(await handleRequest(supabase, body))
   } catch (error) {
-    if (error instanceof RequestError) return jsonResponse({ error: error.message }, error.status)
+    if (error instanceof RequestError) return jsonResponse({ error: error.message, code: error.code }, error.status)
     const message = error instanceof Error ? error.message : "Error desconocido"
     console.error("catalog-customer-access:", message)
     return jsonResponse({ error: "No se pudo completar la operación del catálogo" }, 500)
