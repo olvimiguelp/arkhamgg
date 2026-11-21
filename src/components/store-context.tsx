@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react"
+import { createContext, useContext, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { deleteInvoiceFromStorage } from "@/lib/invoice-storage"
 import { getTenantBranding } from "@/lib/tenant-branding"
 import { isAlmacenCategory, normalizeAlmacenBoxNumber } from "@/lib/almacen"
@@ -967,6 +967,8 @@ interface StoreContextType {
   sales: Sale[]
   suppliers: Supplier[]
   customers: Customer[]
+  customersLoadError: string | null
+  reloadCustomers: () => Promise<void>
   payments: Payment[]
   paymentAllocations: PaymentAllocationRecord[]
   createAlmacenSale: (params: {
@@ -1065,6 +1067,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [sales, setSales] = useState<Sale[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [customersLoadError, setCustomersLoadError] = useState<string | null>(null)
+  const customerRequest = useRef(0)
   const [payments, setPayments] = useState<Payment[]>([])
   const [paymentAllocations, setPaymentAllocations] = useState<PaymentAllocationRecord[]>([])
   const [repairs, setRepairs] = useState<Repair[]>(INITIAL_REPAIRS)
@@ -1094,7 +1098,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         : currentUser.adminId || currentUser.ownerAdminId || currentUser.id
     const adminId = String(tenantOwnerId || "").trim()
     return adminId.length > 0 ? adminId : null
-  }, [currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id])
+  }, [currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id, currentUser?.role])
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -1309,34 +1313,37 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
+  const customerTenantId = getTenantAdminId()
+  const activeCustomerTenant = useRef(customerTenantId)
+  useLayoutEffect(() => {
+    activeCustomerTenant.current = customerTenantId
+    customerRequest.current++
+    setCustomers([])
+    setCustomersLoadError(null)
+  }, [customerTenantId])
+
   const fetchCustomers = useCallback(async () => {
-    if (!currentUser) {
-      setCustomers([])
-      return
-    }
-    if (isTableMissing("customers")) return
-
-    const supabase = createClient()
-    console.log("[v0] Fetching customers...") // Added debug log
-    const { data, error } = await withTenantFilter(
-      supabase.from("customers").select("*"),
-    ).order("created_at", { ascending: false })
-
-    if (error) {
-      markMissingTable("customers")
-      setCustomers([])
+    if (!customerTenantId || activeCustomerTenant.current !== customerTenantId) return
+    const request = ++customerRequest.current
+    try {
+      const supabase = createClient()
+      const { data, error } = await fetchAllRows<any>((from, to) =>
+        supabase.from("customers").select("*")
+          .eq("owner_admin_id", customerTenantId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, to),
+      )
+      if (request !== customerRequest.current) return
+      if (error) throw error
+      setCustomers((data ?? []).map(mapCustomerFromDB))
+      setCustomersLoadError(null)
+    } catch (error) {
+      if (request !== customerRequest.current) return
       console.warn("[v0] Could not fetch customers:", error)
-      return
+      setCustomersLoadError(getSupabaseErrorMessage(error, "la carga de clientes"))
     }
-
-    if (data) {
-      console.log("[v0] Customers fetched:", data.length) // Added debug log showing count
-      console.log("[v0] Sample customer:", data[0]) // Added debug log showing first customer
-      const formattedCustomers: Customer[] = data.map(mapCustomerFromDB)
-      console.log("[v0] Setting customers state with", formattedCustomers.length, "customers") // Added debug log
-      setCustomers(formattedCustomers)
-    }
-  }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
+  }, [customerTenantId])
 
   const fetchSuppliers = useCallback(async () => {
     if (!currentUser) {
@@ -1898,6 +1905,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     // abren simultáneamente. Cargamos por grupos pequeños para mantener la
     // conexión estable y evitar ERR_HTTP2_SERVER_REFUSED_STREAM.
     const loaders: Array<() => Promise<void>> = [
+      fetchCustomers,
       fetchEmployees,
       fetchSales,
       fetchReturns,
@@ -1906,7 +1914,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       fetchProducts,
       fetchRepairs,
       fetchRepairHistory,
-      fetchCustomers,
       fetchSuppliers,
       fetchExpenses,
       fetchPurchases,
@@ -6390,6 +6397,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         sales,
         suppliers,
         customers,
+        customersLoadError,
+        reloadCustomers: fetchCustomers,
         payments,
         paymentAllocations,
         createAlmacenSale,

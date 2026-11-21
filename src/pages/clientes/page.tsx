@@ -69,6 +69,7 @@ import {
 } from "@/components/ui/popover"
 import { formatCurrency } from "@/lib/utils"
 import { generateSalesReportPDF } from "@/lib/report-pdf-generator"
+import { resolveSaleItemSource } from "@/lib/transaction-classification"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { useSystemConfig } from "@/hooks/use-system-config"
@@ -257,9 +258,25 @@ function getTodayDateValue() {
   return `${today.getFullYear()}-${month}-${day}`
 }
 
+const isGeneralCustomerSale = (sale: Sale, customer: Customer) => {
+  // Una factura de almacén pertenece a su cuenta de almacén, aunque el cliente
+  // importado tenga el mismo nombre o teléfono que el cliente general.
+  const hasAlmacenItems = (Array.isArray(sale.items) ? sale.items : []).some(
+    (item) => resolveSaleItemSource(item, item.sourceTable)?.sourceTable === "armacen",
+  )
+  if (sale.almacenCustomerAccountId || sale.almacenSourceCustomerId || hasAlmacenItems) return false
+
+  // Usa el ID cuando está disponible. Las ventas antiguas sin ID conservan la
+  // búsqueda por nombre/teléfono, pero nunca se mezclan con ventas de almacén.
+  if (sale.customerId) return sale.customerId === customer.id
+  return sale.customerName === customer.name || Boolean(sale.customerPhone && sale.customerPhone === customer.phone)
+}
+
 export default function CustomersPage() {
   const {
     customers,
+    customersLoadError,
+    reloadCustomers,
     addCustomer,
     updateCustomer,
     deleteCustomer,
@@ -291,13 +308,6 @@ export default function CustomersPage() {
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
   const [customerHistory, setCustomerHistory] = useState<Sale[]>([])
   const [customerPayments, setCustomerPayments] = useState<Payment[]>([])
-
-  const isGeneralCustomerSale = (sale: Sale, customer: Customer) =>
-    (sale.customerName === customer.name ||
-      (sale.customerPhone && sale.customerPhone === customer.phone) ||
-      (sale.customerId && sale.customerId === customer.id) ||
-      (sale.almacenSourceCustomerId && sale.almacenSourceCustomerId === customer.id)) &&
-    !sale.almacenCustomerAccountId
 
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false)
   const [recentPaymentReceipt, setRecentPaymentReceipt] = useState<{ payment: Payment; customer: Customer } | null>(null)
@@ -511,7 +521,11 @@ export default function CustomersPage() {
         ipcRenderer.removeListener("whatsapp:status", handleStatus)
         ipcRenderer.removeListener("whatsapp:error", handleError)
       }
-    } else {
+    }
+  }, [ipcRenderer])
+
+  useEffect(() => {
+    if (!ipcRenderer && isWhatsappDialogOpen && !whatsappBotDisabled) {
       let active = true
       const poll = async () => {
         try {
@@ -548,7 +562,7 @@ export default function CustomersPage() {
         clearInterval(interval)
       }
     }
-  }, [ipcRenderer])
+  }, [ipcRenderer, isWhatsappDialogOpen, whatsappBotDisabled])
 
   useEffect(() => {
     if (!ipcRenderer) return
@@ -1607,12 +1621,12 @@ export default function CustomersPage() {
           />
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <Badge
+          {ipcRenderer && <Badge
             variant="outline"
             className={`w-full justify-center sm:w-auto ${whatsappStatus.ready ? "border-emerald-200 text-emerald-700" : ""}`}
           >
             WhatsApp: {whatsappStatus.ready ? "Conectado" : "Desconectado"}
-          </Badge>
+          </Badge>}
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex w-full sm:w-auto">
@@ -1622,7 +1636,7 @@ export default function CustomersPage() {
                   className="w-full min-h-11 gap-2 sm:w-auto"
                   disabled={whatsappBotDisabled}
                 >
-                  {whatsappStatus.ready ? "Conectado" : "Conectar"}
+                  {ipcRenderer ? (whatsappStatus.ready ? "Conectado" : "Conectar") : "WhatsApp"}
                 </Button>
               </span>
             </TooltipTrigger>
@@ -1654,6 +1668,13 @@ export default function CustomersPage() {
           )}
         </div>
       </div>
+
+      {customersLoadError && (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          <span>No se pudo cargar la lista de clientes. {customersLoadError}</span>
+          <Button variant="outline" size="sm" onClick={() => void reloadCustomers()}>Reintentar</Button>
+        </div>
+      )}
 
       <div className="hidden overflow-hidden rounded-md border lg:block">
         <Table>

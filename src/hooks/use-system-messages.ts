@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { createClient, RealtimeChannel } from "@supabase/supabase-js"
+import { useEffect, useMemo, useState } from "react"
+import type { RealtimeChannel } from "@supabase/supabase-js"
+import { getDefaultSupabaseKey, getDefaultSupabaseUrl, getSystemClient } from "@/lib/supabase/system-client"
 
 export interface SystemMessage {
   id: string
@@ -20,14 +21,6 @@ interface UseSystemMessagesOptions {
   onlyActive?: boolean
 }
 
-const getDefaultSupabaseUrl = () =>
-  (import.meta.env.VITE_SYSTEM_SUPABASE_URL as string | undefined) ??
-  (import.meta.env.VITE_SUPABASE_URL as string | undefined)
-
-const getDefaultSupabaseKey = () =>
-  (import.meta.env.VITE_SYSTEM_SUPABASE_ANON_KEY as string | undefined) ??
-  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)
-
 const isExpired = (message: SystemMessage) => {
   if (!message.expires_at) return false
   return new Date(message.expires_at) < new Date()
@@ -40,18 +33,6 @@ export function useSystemMessages(options: UseSystemMessagesOptions = {}) {
   const [error, setError] = useState<Error | null>(null)
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
   const [dismissedUntil, setDismissedUntil] = useState<string | null>(null)
-  const channelRef = useRef<RealtimeChannel | null>(null)
-
-  const configKey = useMemo(
-    () =>
-      [
-        options.supabaseUrl ?? getDefaultSupabaseUrl(),
-        options.supabaseKey ? "custom" : "default",
-        onlyActive ? "active" : "all",
-      ].join("|"),
-    [options.supabaseUrl, options.supabaseKey, onlyActive],
-  )
-
   const storageKey = useMemo(() => {
     const url = options.supabaseUrl ?? getDefaultSupabaseUrl() ?? "default"
     return `system_messages_dismissed_until|${url}`
@@ -83,7 +64,8 @@ export function useSystemMessages(options: UseSystemMessagesOptions = {}) {
     }
 
     let mounted = true
-    const supabase = createClient(supabaseUrl, supabaseKey)
+    const supabase = getSystemClient(supabaseUrl, supabaseKey)
+    let channel: RealtimeChannel | undefined
 
     const init = async () => {
       try {
@@ -107,7 +89,8 @@ export function useSystemMessages(options: UseSystemMessagesOptions = {}) {
           setMessages(filtered as SystemMessage[])
         }
 
-        const chan = supabase
+        if (!mounted) return
+        channel = supabase
           .channel(`system_messages_changes_${Math.random().toString(36).substring(2, 9)}`)
           .on(
             "broadcast",
@@ -158,8 +141,6 @@ export function useSystemMessages(options: UseSystemMessagesOptions = {}) {
           )
           .subscribe()
 
-        channelRef.current = chan
-
         if (mounted) {
           setLoading(false)
         }
@@ -175,11 +156,9 @@ export function useSystemMessages(options: UseSystemMessagesOptions = {}) {
 
     return () => {
       mounted = false
-      if (channelRef.current) {
-        channelRef.current.unsubscribe()
-      }
+      if (channel) void supabase.removeChannel(channel)
     }
-  }, [configKey, onlyActive])
+  }, [options.supabaseUrl, options.supabaseKey, onlyActive])
 
   const dismiss = (messageId: string) => {
     const target = messages.find((msg) => msg.id === messageId)

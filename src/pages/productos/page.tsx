@@ -62,10 +62,6 @@ export interface Product {
   sku: string
   name: string
   category: string
-  locationType?: "box" | "zone" | null
-  locationValue?: string
-  locationBoxNumber?: string
-  locationZone?: string
   imageUrl?: string
   imageThumbnailUrl?: string
   stock: number
@@ -135,12 +131,6 @@ const getNextProductId = (products: Array<Pick<Product, "sku">>) => {
   }
 
   return `PRD${String(sequence).padStart(6, "0")}`
-}
-
-const getProductLocationLabel = (product: Pick<Product, "locationType" | "locationValue" | "locationBoxNumber" | "locationZone">) => {
-  const boxNumber = product.locationBoxNumber?.trim() || (product.locationType === "box" ? product.locationValue?.trim() : "")
-  const zone = product.locationZone?.trim() || (product.locationType === "zone" ? product.locationValue?.trim() : "")
-  return [zone && `Zona ${zone}`, boxNumber && `Caja ${boxNumber}`].filter(Boolean).join(" · ") || "-"
 }
 
 export default function ProductsPage() {
@@ -308,10 +298,6 @@ export default function ProductsPage() {
     sku: "",
     name: "",
     category: "",
-    locationType: "",
-    locationValue: "",
-    locationBoxNumber: "",
-    locationZone: "",
     imei: "",
     buyPrice: "",
     wholesalePrice: "",
@@ -333,10 +319,6 @@ export default function ProductsPage() {
       sku: "",
       name: "",
       category: "",
-      locationType: "",
-      locationValue: "",
-      locationBoxNumber: "",
-      locationZone: "",
       imei: "",
       buyPrice: "",
       wholesalePrice: "",
@@ -624,7 +606,7 @@ export default function ProductsPage() {
       (product) =>
         product.name.toLowerCase().includes(normalizedSearchTerm) ||
         product.sku.toLowerCase().includes(normalizedSearchTerm) ||
-        getProductLocationLabel(product).toLowerCase().includes(normalizedSearchTerm),
+        product.imei?.toLowerCase().includes(normalizedSearchTerm),
     )
     .filter((product) => filterCategory === "all" || product.category === filterCategory)
     .filter((product) => filterSupplier === "all" || product.supplier === filterSupplier)
@@ -658,11 +640,6 @@ export default function ProductsPage() {
     const sku = editingId ? formData.sku.trim() : getNextProductId(products)
     const name = formData.name.trim()
     const category = formData.category.trim() || "General"
-    const locationType = formData.locationType === "box" || formData.locationType === "zone" ? formData.locationType : ""
-    const rawBoxNumber = formData.locationBoxNumber.trim()
-    const boxNumber = rawBoxNumber
-    const zone = formData.locationZone.trim()
-    const locationValue = locationType === "box" ? boxNumber : locationType === "zone" ? zone : ""
     const buyPrice = formData.buyPrice.trim() === "" ? 0 : Number(formData.buyPrice)
     const sellPrice = formData.sellPrice.trim() === "" ? 0 : Number(formData.sellPrice)
     const wholesalePrice = formData.wholesalePrice.trim() === "" ? 0 : Number(formData.wholesalePrice)
@@ -710,10 +687,6 @@ export default function ProductsPage() {
         sku,
         name,
         category,
-        locationType: locationType || null,
-        locationValue,
-        locationBoxNumber: boxNumber,
-        locationZone: zone,
         buyPrice,
         wholesalePrice,
         sellPrice,
@@ -721,8 +694,8 @@ export default function ProductsPage() {
         stock,
         minStock,
         supplier: formData.supplier,
-        capacity: formData.capacity || undefined,
-        imei: formData.imei || undefined,
+        capacity: formData.capacity.trim(),
+        imei: formData.imei.trim(),
         imageUrl: uploadedImageUrl || catalogProducts.find((p) => p.id === editingId)?.imageUrl,
         imageThumbnailUrl: uploadedImageThumbnailUrl || catalogProducts.find((p) => p.id === editingId)?.imageThumbnailUrl,
       }
@@ -735,10 +708,6 @@ export default function ProductsPage() {
         sku,
         name,
         category,
-        locationType: locationType || undefined,
-        locationValue: locationValue || undefined,
-        locationBoxNumber: boxNumber || undefined,
-        locationZone: zone || undefined,
         buyPrice,
         wholesalePrice,
         sellPrice,
@@ -780,10 +749,6 @@ export default function ProductsPage() {
       sku: product.sku,
       name: product.name,
       category: product.category,
-      locationType: product.locationType || "",
-      locationValue: product.locationValue || "",
-      locationBoxNumber: product.locationBoxNumber || (product.locationType === "box" ? product.locationValue : "") || "",
-      locationZone: product.locationZone || (product.locationType === "zone" ? product.locationValue : "") || "",
       buyPrice: product.buyPrice.toString(),
       wholesalePrice: product.wholesalePrice?.toString() || "0",
       sellPrice: product.sellPrice.toString(),
@@ -792,7 +757,7 @@ export default function ProductsPage() {
       minStock: product.minStock?.toString() || "0",
       supplier: product.supplier,
       capacity: product.capacity || "",
-      imei: (product as any).imei || "",
+      imei: product.imei || "",
     })
     setImagePreview((product as any).imageUrl || null)
     setImageFile(null)
@@ -1631,8 +1596,8 @@ export default function ProductsPage() {
                       <div className="min-w-0">
                         <p className="font-semibold break-words">{product.name}</p>
                         <p className="text-xs text-muted-foreground">{product.sku}</p>
-                        {(product.locationBoxNumber || product.locationZone || product.locationValue) && (
-                          <p className="text-xs text-muted-foreground">{getProductLocationLabel(product)}</p>
+                        {product.imei && (
+                          <p className="text-xs text-muted-foreground">IMEI: {product.imei}</p>
                         )}
                       </div>
                       <Badge variant="secondary" className="shrink-0">{product.category}</Badge>
@@ -1692,7 +1657,7 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>ID</TableHead>
-                  <TableHead>Ubicación</TableHead>
+                  <TableHead>IMEI</TableHead>
                   <TableHead>Descripción del Producto</TableHead>
                   <TableHead>Capacidad</TableHead>
                   <TableHead>Precio Costo</TableHead>
@@ -1717,7 +1682,7 @@ export default function ProductsPage() {
                   productsToDisplay.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="font-medium">{product.sku}</TableCell>
-                      <TableCell>{getProductLocationLabel(product)}</TableCell>
+                      <TableCell>{product.imei || "-"}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           {product.imageThumbnailUrl || product.imageUrl ? (
@@ -1888,41 +1853,26 @@ export default function ProductsPage() {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
               <div className="space-y-2">
-                <Label>Ubicar producto por</Label>
-                <Select
-                  value={formData.locationType || "none"}
-                  onValueChange={(value) => setFormData((current) => value === "none"
-                    ? { ...current, locationType: "", locationValue: "", locationBoxNumber: "", locationZone: "" }
-                    : { ...current, locationType: value })}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sin ubicación</SelectItem>
-                    <SelectItem value="box">Número de caja</SelectItem>
-                    <SelectItem value="zone">Zona</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="product-imei">IMEI (opcional)</Label>
+                <Input
+                  id="product-imei"
+                  inputMode="numeric"
+                  placeholder="Ej. 012345678901234"
+                  value={formData.imei}
+                  onChange={(event) => handleInputChange("imei", event.target.value)}
+                />
               </div>
-              {formData.locationType && (
-                <>
-                  <div className="space-y-2">
-                    <Label>Número de caja</Label>
-                    <Input
-                      value={formData.locationBoxNumber}
-                      onChange={(event) => handleInputChange("locationBoxNumber", event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Zona</Label>
-                    <Input
-                      value={formData.locationZone}
-                      onChange={(event) => handleInputChange("locationZone", event.target.value)}
-                    />
-                  </div>
-                </>
-              )}
+              <div className="space-y-2">
+                <Label htmlFor="product-capacity">Capacidad (opcional)</Label>
+                <Input
+                  id="product-capacity"
+                  placeholder="Ej. 128 GB"
+                  value={formData.capacity}
+                  onChange={(event) => handleInputChange("capacity", event.target.value)}
+                />
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-3">
               <div className="space-y-2">

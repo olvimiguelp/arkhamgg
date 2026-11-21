@@ -1021,10 +1021,7 @@ export default function CustomersPage() {
       if (paymentAllocations.length === 0) {
         const fallbackCandidates = sortSalesByRecencyDesc(
           sales.filter((sale) => {
-            const matchesCustomer =
-              sale.customerId === payment.customerId ||
-              sale.customerName === customer?.name ||
-              (!!customer?.phone && sale.customerPhone === customer.phone)
+            const matchesCustomer = sale.customerId === payment.customerId
             return matchesCustomer && Number(sale.amountPaid || 0) > 0
           }),
         )
@@ -1341,13 +1338,7 @@ export default function CustomersPage() {
   }, [isEditDialogOpen, currentCustomer])
 
   const getCustomerSalesHistory = useCallback(
-    (customer: Customer) =>
-      sales.filter(
-        (sale) =>
-          sale.customerName === customer.name ||
-          (sale.customerPhone && sale.customerPhone === customer.phone) ||
-          (sale.customerId && sale.customerId === customer.id),
-      ),
+    (customer: Customer) => sales.filter((sale) => sale.customerId === customer.id),
     [sales],
   )
 
@@ -2020,11 +2011,6 @@ export default function CustomersPage() {
       return
     }
 
-    const isSaleForPaymentCustomer = (sale: Sale) =>
-      sale.customerId === paymentCustomer.id ||
-      (sale.customerPhone && sale.customerPhone === paymentCustomer.phone) ||
-      sale.customerName === paymentCustomer.name
-
     const appliedSaleIds = [...selectedPaymentSaleIds]
 
     setPendingPayment({
@@ -2066,10 +2052,7 @@ export default function CustomersPage() {
       note: pendingPayment.note,
     }
     const customerName = pendingPayment.customerName
-    const isSaleForPaymentCustomer = (sale: Sale) =>
-      sale.customerId === customerForReceipt.id ||
-      (customerForReceipt.phone && sale.customerPhone === customerForReceipt.phone) ||
-      sale.customerName === customerForReceipt.name
+    const isSaleForPaymentCustomer = (sale: Sale) => sale.customerId === customerForReceipt.id
     const allCustomerSales = sales.filter(isSaleForPaymentCustomer)
     const paymentAllocationsPreview = allocatePaymentToInvoices(
       allCustomerSales,
@@ -2291,10 +2274,7 @@ export default function CustomersPage() {
           if (Number.isNaN(saleDate.getTime())) return false
           if (saleDate < periodRange.start || saleDate > periodRange.end) return false
 
-          const isCustomerMatch =
-            s.customerName === currentCustomer!.name ||
-            (s.customerPhone && s.customerPhone === currentCustomer!.phone) ||
-            (s.customerId && s.customerId === currentCustomer!.id)
+          const isCustomerMatch = s.customerId === currentCustomer!.id
 
           // Igual que en /clientes: reporte individual solo incluye compras a credito.
           return isCustomerMatch && s.status === "credito"
@@ -2434,10 +2414,7 @@ export default function CustomersPage() {
       sortSalesByRecencyDesc(
         sales.filter(
           (sale) =>
-            (sale.customerId === paymentCustomer?.id ||
-              (paymentCustomer?.phone && sale.customerPhone === paymentCustomer.phone) ||
-              sale.customerName === paymentCustomer?.name) &&
-            getSaleCreditPendingAmount(sale) > 0,
+            sale.customerId === paymentCustomer?.id && getSaleCreditPendingAmount(sale) > 0,
         ),
       ),
     [paymentCustomer?.id, paymentCustomer?.name, paymentCustomer?.phone, sales],

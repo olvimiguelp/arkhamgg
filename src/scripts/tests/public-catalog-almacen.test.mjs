@@ -35,12 +35,12 @@ try {
     CREATE TABLE products (
       id UUID PRIMARY KEY, owner_admin_id UUID, sku VARCHAR(50), name VARCHAR(255),
       category VARCHAR(100), stock INTEGER, sell_price NUMERIC(10,2), wholesale_price NUMERIC(10,2),
-      image_url TEXT, image_thumbnail_url TEXT, updated_at TIMESTAMPTZ
+      image_url TEXT, image_thumbnail_url TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ
     );
     CREATE TABLE armacen (
       id UUID PRIMARY KEY, owner_admin_id UUID, sku VARCHAR(50), name VARCHAR(255),
       category VARCHAR(100), stock INTEGER, sell_price NUMERIC, box_number VARCHAR(50),
-      image_url TEXT, updated_at TIMESTAMPTZ
+      image_url TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ
     );
     CREATE TABLE sales (
       id UUID PRIMARY KEY, owner_admin_id UUID, invoice_number TEXT, items JSONB,
@@ -83,6 +83,18 @@ try {
   await db.exec(searchMigration)
   await db.exec(searchMigration)
 
+  await db.exec(`UPDATE catalog_shares SET product_ids = ARRAY['${battery}'::uuid]
+    WHERE token IN ('normal', 'wholesale');
+    UPDATE catalog_shares SET product_ids = ARRAY['${battery}'::uuid, '${unavailable}'::uuid]
+    WHERE token = 'batteries';
+    UPDATE catalog_shares SET product_ids = ARRAY['${screen}'::uuid] WHERE token = 'screens';
+    UPDATE catalog_shares SET product_ids = ARRAY['${custom}'::uuid] WHERE token = 'custom';`)
+  for (const file of ['078-public-catalog-product-scope.sql', '079-public-catalog-new-products.sql']) {
+    const sql = await readFile(new URL(`../${file}`, import.meta.url), 'utf8')
+    await db.exec(sql)
+    await db.exec(sql)
+  }
+
   const snapshot = async (token, search = null, category = null, offset = 0, limit = 24) =>
     (await db.query('SELECT get_public_catalog_snapshot($1,$2,$3,$4,$5,TRUE) AS data',
       [token, limit, offset, search, category])).rows[0].data
@@ -106,14 +118,26 @@ try {
   assert.equal((await snapshot('wholesale')).products[0].sell_price, 250)
   assert.equal((await snapshot('normal')).products[0].name, 'Producto normal')
 
+  await db.exec('BEGIN')
+  await db.exec(`INSERT INTO products(id, owner_admin_id, sku, name, category, stock, sell_price, wholesale_price, created_at) VALUES
+    ('${screen}', '${owner}', 'NEW', 'Nuevo', 'Nueva', 2, 12, 9, now()),
+    ('${custom}', '${owner}', 'OLD', 'Anterior excluido', 'Oculta', 2, 12, 9, '2000-01-01'),
+    ('${foreign}', '${otherOwner}', 'OTHER', 'Otra empresa', 'Oculta', 2, 12, 9, now())`)
+  assert.deepEqual((await snapshot('wholesale', 'Nuevo')).products.map(p => p.sell_price), [9])
+  assert.deepEqual((await snapshot('normal')).categories, ['Accesorios', 'Nueva'])
+  assert.deepEqual((await db.query("SELECT category FROM get_public_catalog_categories('normal')")).rows.map(r => r.category), ['Accesorios', 'Nueva'])
+  assert.equal((await snapshot('normal')).products.length, 2)
+  await order('normal', [{ id: screen, quantity: 1 }])
+  await db.exec('ROLLBACK')
+
   // Exercise the real RPCs, including both catalog sources and legacy clients.
   await db.exec('BEGIN')
   await db.exec(`
     UPDATE products SET name = 'iPhone 15 Pro Max', sku = 'APL-15-PM', category = 'Pantallas';
     UPDATE armacen SET name = 'Pantalla iPhone 15 Pro Max' WHERE id = '${screen}';
     UPDATE armacen SET name = 'Pantalla iPhone 15 Pro Max', category = 'pantallas' WHERE id = '${foreign}';
-    INSERT INTO catalog_shares(token, owner_admin_id, source_table, category_filter)
-      VALUES ('combined', '${owner}', 'armacen', 'json:["baterias","pantallas"]');
+    INSERT INTO catalog_shares(token, owner_admin_id, source_table, product_ids, category_filter)
+      VALUES ('combined', '${owner}', 'armacen', ARRAY['${screen}'::uuid], 'json:["baterias","pantallas"]');
   `)
   for (const token of ['normal', 'wholesale', 'screens', 'combined']) {
     const expectedId = ['normal', 'wholesale'].includes(token) ? battery : screen

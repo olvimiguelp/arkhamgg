@@ -957,10 +957,10 @@ export default function SalesPage() {
         if (!customer) return []
         return sales.filter(
           (sale) =>
-            (sale.customerName === customer.name ||
-              (sale.customerPhone && sale.customerPhone === customer.phone) ||
-              (sale.customerId && sale.customerId === customer.id)) &&
+            sale.customerId === customer.id &&
             !sale.almacenCustomerAccountId &&
+            !sale.almacenSourceCustomerId &&
+            !(Array.isArray(sale.items) && sale.items.some((item) => isAlmacenSourceRecord(item))) &&
             getSaleCreditPendingAmount(sale) > 0
         )
       }
@@ -2689,7 +2689,6 @@ export default function SalesPage() {
                 products={productsToDisplay}
                 onCardClick={addToCart}
                 priceMode={isWholesalePage ? "wholesale" : "sell"}
-                showLocationInsteadOfCategory
                 showCapacity={false}
               />
               {!searchTerm.trim() && hasMoreProducts && (

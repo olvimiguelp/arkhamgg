@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { createClient, RealtimeChannel } from "@supabase/supabase-js"
+import { useEffect, useMemo, useState } from "react"
+import type { RealtimeChannel } from "@supabase/supabase-js"
+import { getDefaultSupabaseKey, getDefaultSupabaseUrl, getSystemClient } from "@/lib/supabase/system-client"
 
 interface SystemConfigRow {
   id: string
@@ -16,14 +17,6 @@ interface UseSystemConfigOptions {
   pollIntervalMs?: number
 }
 
-const getDefaultSupabaseUrl = () =>
-  (import.meta.env.VITE_SYSTEM_SUPABASE_URL as string | undefined) ??
-  (import.meta.env.VITE_SUPABASE_URL as string | undefined)
-
-const getDefaultSupabaseKey = () =>
-  (import.meta.env.VITE_SYSTEM_SUPABASE_ANON_KEY as string | undefined) ??
-  (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)
-
 export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   const keysKey = useMemo(
     () => (options.keys?.length ? options.keys.join(",") : ""),
@@ -37,7 +30,6 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   const [config, setConfig] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
-  const channelRef = useRef<RealtimeChannel | null>(null)
 
   useEffect(() => {
     const supabaseUrl = options.supabaseUrl ?? getDefaultSupabaseUrl()
@@ -56,7 +48,8 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
     let mounted = true
     let fetching = false
     let pollId: number | null = null
-    const supabase = createClient(supabaseUrl, supabaseKey)
+    const supabase = getSystemClient(supabaseUrl, supabaseKey)
+    let channel: RealtimeChannel | undefined
     const fetchConfig = async (silent = false) => {
       if (fetching) return
       fetching = true
@@ -106,12 +99,13 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
     const init = async () => {
       try {
         await fetchConfig(false)
+        if (!mounted) return
 
         const filter = options.keys?.length
           ? `key=in.(${options.keys.join(",")})`
           : undefined
 
-        const chan = supabase
+        channel = supabase
           .channel(`system_config_changes_${Math.random().toString(36).substring(2, 9)}`)
           .on(
             "postgres_changes",
@@ -140,8 +134,6 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
             },
           )
           .subscribe()
-
-        channelRef.current = chan
 
         if (mounted) {
           setLoading(false)
@@ -179,9 +171,7 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
 
     return () => {
       mounted = false
-      if (channelRef.current) {
-        channelRef.current.unsubscribe()
-      }
+      if (channel) void supabase.removeChannel(channel)
       if (pollId) {
         window.clearInterval(pollId)
       }

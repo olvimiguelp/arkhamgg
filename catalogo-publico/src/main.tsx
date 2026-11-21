@@ -49,11 +49,6 @@ type CatalogCustomerSession = {
   customer: CatalogCustomer
 }
 
-type CachedCatalogPage = {
-  expiresAt: number
-  snapshot: CatalogSnapshot
-}
-
 type CatalogPageRequest = {
   token: string
   search: string
@@ -67,46 +62,11 @@ const money = (value: number) =>
 
 const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
-const CATALOG_CACHE_TTL_MS = 60 * 1000
 const ORDER_CONFIRMATION_DURATION_MS = 7000
-const CATALOG_CACHE_PREFIX = "arkham:public-catalog:v4:"
 const CUSTOMER_SESSION_PREFIX = "arkham:catalog-customer-session:v1:"
 
 function makeCatalogQueryKey(token: string, search: string, category: string) {
   return JSON.stringify([token, search, category])
-}
-
-function makeCatalogCacheKey({ token, search, category, offset }: CatalogPageRequest) {
-  return `${CATALOG_CACHE_PREFIX}${JSON.stringify([token, search, category, offset])}`
-}
-
-function readCatalogCache(request: CatalogPageRequest): CatalogSnapshot | null {
-  try {
-    const cacheKey = makeCatalogCacheKey(request)
-    const raw = window.sessionStorage.getItem(cacheKey)
-    if (!raw) return null
-
-    const cached = JSON.parse(raw) as CachedCatalogPage
-    if (!cached?.expiresAt || cached.expiresAt <= Date.now() || !cached.snapshot) {
-      window.sessionStorage.removeItem(cacheKey)
-      return null
-    }
-    return cached.snapshot
-  } catch {
-    return null
-  }
-}
-
-function writeCatalogCache(request: CatalogPageRequest, snapshot: CatalogSnapshot) {
-  try {
-    const value: CachedCatalogPage = {
-      expiresAt: Date.now() + CATALOG_CACHE_TTL_MS,
-      snapshot,
-    }
-    window.sessionStorage.setItem(makeCatalogCacheKey(request), JSON.stringify(value))
-  } catch {
-    // El catálogo sigue funcionando aunque el navegador bloquee sessionStorage.
-  }
 }
 
 function parseCatalogSnapshot(value: unknown): CatalogSnapshot {
@@ -138,9 +98,6 @@ function errorMessage(error: unknown, fallback: string) {
 }
 
 async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal?: AbortSignal): Promise<CatalogSnapshot> {
-  const cached = readCatalogCache(request)
-  if (cached) return cached
-
   const query = supabase.rpc("get_public_catalog_snapshot", {
     p_token: request.token,
     p_limit: PRODUCTS_PER_PAGE,
@@ -152,9 +109,7 @@ async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal
   const { data, error } = await (signal ? query.abortSignal(signal) : query)
   if (error) throw error
 
-  const snapshot = parseCatalogSnapshot(data)
-  writeCatalogCache(request, snapshot)
-  return snapshot
+  return parseCatalogSnapshot(data)
 }
 
 function CatalogoPublico() {
