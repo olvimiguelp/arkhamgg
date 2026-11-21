@@ -324,6 +324,25 @@ try {
   const accountId = (await db.query(
     "SELECT id FROM catalog_customer_accounts WHERE phone='8095550111'",
   )).rows[0].id
+  await db.exec(await readFile(new URL('../087-catalog-customer-permissions.sql', import.meta.url), 'utf8'))
+  await db.exec('BEGIN')
+  const setPermissions = async warehouse => db.query(
+    "SELECT * FROM account_catalog_settings($1,'test-password',$2,$3::jsonb)",
+    [owner,accountId, JSON.stringify({normal:null,wholesale:null,warehouse})])
+  const assignedSections = async () => (await db.query('SELECT * FROM account_catalog_sections($1)',[accountId])).rows
+  const canOpen = async token => (await db.query('SELECT account_can_open_catalog($1,$2) AS allowed',[accountId,token])).rows[0].allowed
+  await setPermissions(['baterias'])
+  const personal = (await assignedSections())[0].token
+  assert.equal(await canOpen(personal),true)
+  assert.equal(await canOpen('screens'),false)
+  assert.deepEqual((await snapshot(personal)).categories,['baterias'])
+  await setPermissions(['baterias','pantallas'])
+  assert.equal((await assignedSections())[0].token,personal)
+  assert.deepEqual((await snapshot(personal)).categories,['baterias','pantallas'])
+  await setPermissions(null)
+  assert.deepEqual(await assignedSections(),[])
+  assert.equal(await canOpen(personal),false)
+  await db.exec('ROLLBACK')
   const accountOrder = await db.query(
     'SELECT submit_catalog_order_for_customer($1,$2,$3::jsonb) AS id',
     ['batteries', accountId, JSON.stringify([{ id: battery, quantity: 1 }])],

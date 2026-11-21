@@ -139,25 +139,12 @@ async function requireStaff(
   return { id: employee.id, ownerAdminId }
 }
 
-async function requireActiveCatalogShare(supabase: ReturnType<typeof createClient>, token: unknown) {
-  const catalogToken = requireText(token, "El enlace del catálogo")
-  const { data: share, error } = await supabase
-    .from("catalog_shares")
-    .select("owner_admin_id, source_table, active, expires_at")
-    .eq("token", catalogToken)
-    .eq("active", true)
-    .maybeSingle()
-
-  if (error) throw new RequestError("No se pudo validar el enlace del catálogo", 503)
-  if (
-    !share ||
-    !["products", "armacen"].includes(share.source_table) ||
-    (share.expires_at && new Date(share.expires_at).getTime() <= Date.now())
-  ) {
-    throw new RequestError("Este enlace no corresponde a un catálogo activo", 404)
-  }
-
-  return { token: catalogToken, ownerAdminId: share.owner_admin_id as string }
+async function requireAccountCatalog(supabase: ReturnType<typeof createClient>, customerId: string, token: unknown) {
+  const catalogToken = requireText(token, "El catálogo")
+  const { data, error } = await supabase.rpc("account_can_open_catalog", { p_customer: customerId, p_token: catalogToken })
+  if (error) throw new RequestError("No se pudo verificar el catálogo de la cuenta", 503)
+  if (!data) throw new RequestError("Esta cuenta no tiene acceso a este catálogo", 403)
+  return catalogToken
 }
 
 async function resolveCustomerSession(
@@ -227,10 +214,10 @@ async function handleRequest(
   if (body.action === "create") {
     const actor = await requireStaff(supabase, body, "create")
     const name = requireText(body.name, "El nombre")
-    const email = requireText(body.email, "El correo").trim().toLowerCase()
+    const email = body.email?.trim().toLowerCase() || null
     const phone = requireText(body.phone, "El teléfono")
     const password = requireText(body.password, "La contraseña")
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RequestError("El correo no es válido", 400)
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RequestError("El correo no es válido", 400)
     if (!/^\d{10}$/.test(phone)) throw new RequestError("El teléfono debe tener exactamente 10 dígitos", 400)
     if (password.length < 8) throw new RequestError("La contraseña debe tener al menos 8 caracteres", 400)
 
@@ -419,19 +406,16 @@ async function handleRequest(
 
   if (body.action === "storefront") {
     const customer = await resolveCustomerSession(supabase, body.session_token)
-    const { data: sections, error } = await supabase.rpc("catalog_storefront_sections", {
-      p_owner: customer.ownerAdminId,
+    const { data: sections, error } = await supabase.rpc("account_catalog_sections", {
+      p_customer: customer.id,
     })
     if (error) throw new RequestError("No se pudieron cargar las secciones del catálogo", 503)
     return { sections: sections ?? [] }
   }
 
   if (body.action === "catalog") {
-    const share = await requireActiveCatalogShare(supabase, body.token)
     const customer = await resolveCustomerSession(supabase, body.session_token)
-    if (customer.ownerAdminId !== share.ownerAdminId) {
-      throw new RequestError("Este enlace no pertenece al administrador de tu cuenta", 403)
-    }
+    const token = await requireAccountCatalog(supabase, customer.id, body.token)
 
     const limit = body.limit ?? 24
     const offset = body.offset ?? 0
@@ -448,7 +432,7 @@ async function handleRequest(
     }
 
     const { data, error } = await supabase.rpc("get_public_catalog_snapshot", {
-      p_token: share.token,
+      p_token: token,
       p_limit: limit,
       p_offset: offset,
       p_search: search || null,
@@ -471,17 +455,14 @@ async function handleRequest(
   }
 
   if (body.action === "order") {
-    const share = await requireActiveCatalogShare(supabase, body.token)
     const customer = await resolveCustomerSession(supabase, body.session_token)
-    if (customer.ownerAdminId !== share.ownerAdminId) {
-      throw new RequestError("Esta cuenta no pertenece a la empresa del catálogo", 403)
-    }
+    const token = await requireAccountCatalog(supabase, customer.id, body.token)
     if (!Array.isArray(body.items) || body.items.length === 0) {
       throw new RequestError("El carrito está vacío", 400)
     }
 
     const { data: saleId, error } = await supabase.rpc("submit_catalog_order_for_customer", {
-      p_token: share.token,
+      p_token: token,
       p_customer_id: customer.id,
       p_items: body.items,
     })

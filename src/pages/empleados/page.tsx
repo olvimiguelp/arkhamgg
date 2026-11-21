@@ -227,6 +227,8 @@ export default function EmpleadosPage() {
   const [catalogCustomerEmail, setCatalogCustomerEmail] = useState("")
   const [catalogCustomerPhone, setCatalogCustomerPhone] = useState("")
   const [catalogCustomerPassword, setCatalogCustomerPassword] = useState("")
+  const [accessCustomer, setAccessCustomer] = useState<CatalogCustomerDirectoryEntry | null>(null)
+  const [catalogDirectoryError, setCatalogDirectoryError] = useState("")
   const [catalogCustomers, setCatalogCustomers] = useState<CatalogCustomerAccount[]>([])
   const [catalogBuyers, setCatalogBuyers] = useState<CatalogOrderCustomer[]>([])
   const [catalogOrderHistory, setCatalogOrderHistory] = useState<CatalogOrderHistory[]>([])
@@ -245,6 +247,8 @@ export default function EmpleadosPage() {
       })
     return Array.from(options, ([value, label]) => ({ value, label }))
   }, [products])
+  const productCategoryOptions = Array.from(new Set(products.filter(p => p.sourceTable ? p.sourceTable === "products" :
+              !p.boxNumber && !isAlmacenCategory(p.category)).map(p => p.category).filter(Boolean))).sort().map(value => ({value,label:value}))
   const catalogCustomerDirectory = useMemo(() => {
     const entries = new Map<string, CatalogCustomerDirectoryEntry>()
     const accountKeys = new Map<string, string>()
@@ -347,6 +351,7 @@ export default function EmpleadosPage() {
 
   const loadCatalogCustomerOverview = async () => {
     setIsLoadingCatalogCustomers(true)
+    setCatalogDirectoryError("")
     try {
       const response = await invokeCatalogCustomerAccess({
         action: "overview",
@@ -355,6 +360,7 @@ export default function EmpleadosPage() {
       setCatalogCustomers(response.customers)
       setCatalogBuyers(response.buyers)
     } catch (error) {
+      setCatalogDirectoryError(error instanceof Error ? error.message : "No se pudieron cargar las cuentas.")
       console.error("Error al cargar clientes del catálogo:", error)
       toast({
         title: "Error",
@@ -419,7 +425,7 @@ export default function EmpleadosPage() {
       toast({ title: "Nombre requerido", description: "Escribe el nombre del cliente.", variant: "destructive" })
       return
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim())) {
+    if (catalogCustomerEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim())) {
       toast({ title: "Correo inválido", description: "Escribe un correo válido para el cliente.", variant: "destructive" })
       return
     }
@@ -469,7 +475,7 @@ export default function EmpleadosPage() {
     if (!createdCatalogCredentials) return
     try {
       await navigator.clipboard.writeText(
-        `Correo: ${createdCatalogCredentials.email}\nTeléfono: ${createdCatalogCredentials.phone}\nContraseña: ${createdCatalogCredentials.password}`,
+        [createdCatalogCredentials.email, createdCatalogCredentials.phone, createdCatalogCredentials.password].filter(Boolean).join("\n"),
       )
       toast({ title: "Credenciales copiadas" })
     } catch (error) {
@@ -873,10 +879,10 @@ export default function EmpleadosPage() {
               <CardTitle>Empleados</CardTitle>
               <CardDescription>Lista de todos los empleados registrados</CardDescription>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-wrap gap-2">
             {canAccessEmployees && <Button variant="outline" onClick={openCatalogCustomerDialog} className="min-h-11">
               <Users className="mr-2 h-4 w-4" />
-              Clientes catálogo
+              Usuarios del catálogo de almacén
             </Button>}
             <Button variant="outline" onClick={() => setIsPublicCatalogDialogOpen(true)} className="min-h-11">
               <Share2 className="mr-2 h-4 w-4" />
@@ -1345,7 +1351,7 @@ export default function EmpleadosPage() {
                 <div className="flex flex-col gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-semibold">Cuenta creada. Comparte las credenciales con el cliente.</p>
-                    <p>Correo: {createdCatalogCredentials.email}</p>
+                    {createdCatalogCredentials.email && <p>Correo: {createdCatalogCredentials.email}</p>}
                     <p>Teléfono: {createdCatalogCredentials.phone}</p>
                     <p>Contraseña: {createdCatalogCredentials.password}</p>
                     <p className="text-xs">La contraseña no se guarda en texto y no podrá recuperarse después de cerrar esta ventana.</p>
@@ -1375,7 +1381,7 @@ export default function EmpleadosPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="catalog-customer-email">Correo del cliente</Label>
+                  <Label htmlFor="catalog-customer-email">Correo del cliente (opcional)</Label>
                   <Input
                     id="catalog-customer-email"
                     type="email"
@@ -1420,7 +1426,7 @@ export default function EmpleadosPage() {
                     isCreatingCatalogCustomer ||
                     !canAddEmployees ||
                     !catalogCustomerName.trim() ||
-                    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim()) ||
+                    Boolean(catalogCustomerEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim())) ||
                     !/^\d{10}$/.test(catalogCustomerPhone) ||
                     catalogCustomerPassword.length < 8
                   }
@@ -1437,7 +1443,7 @@ export default function EmpleadosPage() {
                   Actualizar clientes
                 </Button>
               </div>
-              {isLoadingCatalogCustomers ? (
+              {catalogDirectoryError ? <p role="alert">{catalogDirectoryError}</p> : isLoadingCatalogCustomers ? (
                 <p className="py-4 text-center text-sm text-muted-foreground">Cargando clientes y pedidos del catálogo…</p>
               ) : catalogCustomerDirectory.length ? (
                 <div className="max-h-[55vh] overflow-auto rounded-md border">
@@ -1471,6 +1477,7 @@ export default function EmpleadosPage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
+                            {isAdmin && customer.accountId && <Button size="sm" variant="outline" onClick={() => setAccessCustomer(customer)}>Categorías</Button>}
                             <Button
                               type="button"
                               size="sm"
@@ -1569,10 +1576,20 @@ export default function EmpleadosPage() {
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>Compartir catálogo</DialogTitle></DialogHeader>
+          <Button variant="outline" onClick={() => {setIsPublicCatalogDialogOpen(false);openCatalogCustomerDialog()}}>Usuarios del catálogo de almacén</Button>
           {isPublicCatalogDialogOpen && <CatalogPublication isAdmin={isAdmin} ownerId={currentUser?.id || ""}
             credentials={getCatalogStaffCredentials} warehouse={almacenCatalogCategories}
-            products={Array.from(new Set(products.filter(p => p.sourceTable ? p.sourceTable === "products" :
-              !p.boxNumber && !isAlmacenCategory(p.category)).map(p => p.category).filter(Boolean))).sort().map(value => ({value,label:value}))} />}
+            products={productCategoryOptions} />}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(accessCustomer)} onOpenChange={open => { if (!open) setAccessCustomer(null) }}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Categorías de {accessCustomer?.name}</DialogTitle>
+            <DialogDescription>Esta selección se carga al entrar con el teléfono o correo y la contraseña de esta cuenta.</DialogDescription></DialogHeader>
+          {accessCustomer?.accountId && <CatalogPublication key={accessCustomer.accountId} customerId={accessCustomer.accountId}
+            isAdmin={isAdmin} ownerId={currentUser?.id || ""} credentials={getCatalogStaffCredentials} warehouse={almacenCatalogCategories}
+            products={productCategoryOptions} />}
         </DialogContent>
       </Dialog>
 
