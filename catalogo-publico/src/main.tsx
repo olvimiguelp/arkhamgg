@@ -42,6 +42,7 @@ type CatalogCustomer = {
   id: string
   name: string
   phone: string
+  owner_admin_id: string
 }
 
 type CatalogStorefrontSection = {
@@ -52,6 +53,7 @@ type CatalogStorefrontSection = {
 
 type CatalogCustomerSession = {
   sessionToken: string
+  ownerAdminId: string
   customer: CatalogCustomer
 }
 
@@ -70,6 +72,7 @@ const PRODUCTS_PER_PAGE = 24
 const SEARCH_DEBOUNCE_MS = 400
 const ORDER_CONFIRMATION_DURATION_MS = 7000
 const CUSTOMER_SESSION_PREFIX = "arkham:catalog-customer-session:v1:"
+const CUSTOMER_SESSION_STORAGE_KEY = `${CUSTOMER_SESSION_PREFIX}global`
 
 function makeCatalogQueryKey(token: string, search: string, category: string) {
   return JSON.stringify([token, search, category])
@@ -118,9 +121,25 @@ async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal
   return parseCatalogSnapshot(data)
 }
 
+async function getStorefrontSections(
+  supabase: ReturnType<typeof createClient>,
+  ownerAdminId: string,
+): Promise<CatalogStorefrontSection[]> {
+  const { data, error } = await supabase.rpc("catalog_storefront_sections", { p_owner: ownerAdminId })
+  if (error) throw error
+  const sections = (Array.isArray(data) ? data : []) as CatalogStorefrontSection[]
+  const activeSections = sections.filter((section) =>
+    Boolean(section) &&
+    typeof section.token === "string" &&
+    ["normal", "wholesale", "warehouse"].includes(section.kind),
+  )
+  if (!activeSections.length) throw new Error("Tu administrador todavía no publicó un catálogo.")
+  return activeSections
+}
+
 function CatalogoPublico() {
   const requestedToken = new URLSearchParams(window.location.search).get("token") || ""
-  const [token, setToken] = useState(requestedToken)
+  const [token, setToken] = useState("")
   const supabase = useMemo(() => createClient(), [])
   const [storefrontSections, setStorefrontSections] = useState<CatalogStorefrontSection[]>([])
   const [business, setBusiness] = useState("Catalogo 049")
@@ -132,15 +151,10 @@ function CatalogoPublico() {
   const [loginOpen, setLoginOpen] = useState(false)
   const [loginIdentifier, setLoginIdentifier] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
-  const [registrationName, setRegistrationName] = useState("")
-  const [registrationEmail, setRegistrationEmail] = useState("")
-  const [registrationPhone, setRegistrationPhone] = useState("")
-  const [registrationPassword, setRegistrationPassword] = useState("")
-  const [authMode, setAuthMode] = useState<"login" | "register">("register")
   const [authLoading, setAuthLoading] = useState(false)
   const [authMessage, setAuthMessage] = useState("")
   const [sourceTable, setSourceTable] = useState<CatalogSnapshot["source_table"]>()
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [pageLoading, setPageLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [sending, setSending] = useState(false)
@@ -157,8 +171,6 @@ function CatalogoPublico() {
   const [hasMore, setHasMore] = useState(false)
   const lastLoadedQueryRef = useRef("")
   const activeQueryRef = useRef("")
-  const storefrontOwnerId = import.meta.env.VITE_STOREFRONT_OWNER_ID || "5992b49e-1b7c-4f2f-b3d1-894ce02c368a"
-  const customerSessionStorageKey = `${CUSTOMER_SESSION_PREFIX}${storefrontOwnerId}`
 
   useEffect(() => {
     if (!done) return
@@ -168,30 +180,84 @@ function CatalogoPublico() {
   }, [done])
 
   useEffect(() => {
-    if (requestedToken || token) return
     let cancelled = false
+    let sessionToken = ""
+    let sessionVerified = false
+    try {
+      const storedSession = window.localStorage.getItem(CUSTOMER_SESSION_STORAGE_KEY)
+      const parsed: unknown = storedSession ? JSON.parse(storedSession) : null
+      if (parsed && typeof parsed === "object" && "session_token" in parsed &&
+        typeof parsed.session_token === "string") {
+        sessionToken = parsed.session_token
+      }
+    } catch (error) {
+      console.error("No se pudo leer la sesión del catálogo:", error)
+      setAuthMessage("No se pudo recuperar tu sesión guardada. Inicia sesión nuevamente.")
+    }
+
+    if (!sessionToken) return
+
+    setAuthLoading(true)
     void (async () => {
       try {
-        const { data, error } = await supabase.rpc("catalog_storefront_sections", {
-          p_owner: storefrontOwnerId,
+        const response = await invokeCatalogCustomerAccess(supabase, {
+          action: "session",
+          session_token: sessionToken,
         })
-        if (error) throw error
-        const sections = (Array.isArray(data) ? data : []) as CatalogStorefrontSection[]
-        if (!sections.length) throw new Error("El catálogo todavía no está publicado.")
+        const customer = response.customer
+        if (!customer || typeof customer !== "object" ||
+          !("id" in customer) || typeof customer.id !== "string" ||
+          !("name" in customer) || typeof customer.name !== "string" ||
+          !("phone" in customer) || typeof customer.phone !== "string" ||
+          !("owner_admin_id" in customer) || typeof customer.owner_admin_id !== "string") {
+          throw new Error("La función devolvió una sesión de cliente inválida")
+        }
+        sessionVerified = true
+        if (cancelled) return
+
+        setCustomerSession({
+          sessionToken,
+          ownerAdminId: customer.owner_admin_id,
+          customer: {
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone,
+            owner_admin_id: customer.owner_admin_id,
+          },
+        })
+        setName(customer.name)
+        setPhone(customer.phone)
+        const sections = await getStorefrontSections(supabase, customer.owner_admin_id)
         if (cancelled) return
         setStorefrontSections(sections)
-        const defaultSection = sections.find((section) => section.kind === "normal") || sections[0]
-        setToken(defaultSection.token)
+        const selectedSection = requestedToken
+          ? sections.find((section) => section.token === requestedToken) ||
+            sections.find((section) => section.kind === "normal") || sections[0]
+          : sections.find((section) => section.kind === "normal") || sections[0]
+        setToken(selectedSection.token)
+        setMessage("")
       } catch (error) {
         if (cancelled) return
-        setMessage(errorMessage(error, "No se pudo encontrar el catálogo publicado."))
-        setLoading(false)
+        if (!sessionVerified) {
+          try {
+            window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY)
+          } catch (storageError) {
+            console.error("No se pudo borrar la sesión vencida del catálogo:", storageError)
+          }
+          setCustomerSession(null)
+          setAuthMessage(errorMessage(error, "Inicia sesión nuevamente para usar tu cuenta."))
+        } else {
+          setMessage(errorMessage(error, "No se pudo cargar el catálogo de tu administrador."))
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false)
       }
     })()
+
     return () => {
       cancelled = true
     }
-  }, [requestedToken, storefrontOwnerId, supabase, token])
+  }, [requestedToken, supabase])
 
   useEffect(() => {
     if (!token) return
@@ -204,12 +270,7 @@ function CatalogoPublico() {
     setPageLoading(false)
     setProducts([])
     setCart([])
-    setName("")
-    setPhone("")
-    setCustomerSession(null)
     setLoginOpen(false)
-    setLoginIdentifier("")
-    setLoginPassword("")
     setAuthMessage("")
     setCategories([])
     setSourceTable(undefined)
@@ -250,70 +311,6 @@ function CatalogoPublico() {
 
     return () => controller.abort()
   }, [supabase, token])
-
-  useEffect(() => {
-    if (!token) return
-
-    const storageKey = customerSessionStorageKey
-    let sessionToken = ""
-    try {
-      const storedSession = window.localStorage.getItem(storageKey) ||
-        window.localStorage.getItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
-      const parsed: unknown = storedSession ? JSON.parse(storedSession) : null
-      if (parsed && typeof parsed === "object" && "session_token" in parsed &&
-        typeof parsed.session_token === "string") {
-        sessionToken = parsed.session_token
-      }
-    } catch (error) {
-      console.error("No se pudo leer la sesión del catálogo:", error)
-      setAuthMessage("No se pudo recuperar tu sesión guardada. Inicia sesión nuevamente.")
-    }
-
-    if (!sessionToken) return
-
-    let cancelled = false
-    setAuthLoading(true)
-    void invokeCatalogCustomerAccess(supabase, {
-      action: "session",
-      token,
-      session_token: sessionToken,
-    })
-      .then((response) => {
-        const customer = response.customer
-        if (!customer || typeof customer !== "object" ||
-          !("id" in customer) || typeof customer.id !== "string" ||
-          !("name" in customer) || typeof customer.name !== "string" ||
-          !("phone" in customer) || typeof customer.phone !== "string") {
-          throw new Error("La función devolvió una sesión de cliente inválida")
-        }
-        if (cancelled) return
-        setCustomerSession({
-          sessionToken,
-          customer: { id: customer.id, name: customer.name, phone: customer.phone },
-        })
-        setName(customer.name)
-        setPhone(customer.phone)
-        setAuthMessage("")
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return
-        try {
-          window.localStorage.removeItem(storageKey)
-          window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
-        } catch (storageError) {
-          console.error("No se pudo borrar la sesión vencida del catálogo:", storageError)
-        }
-        setCustomerSession(null)
-        setAuthMessage(errorMessage(error, "Inicia sesión nuevamente para usar tu cuenta."))
-      })
-      .finally(() => {
-        if (!cancelled) setAuthLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [customerSessionStorageKey, supabase, token])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(searchTerm.trim()), SEARCH_DEBOUNCE_MS)
@@ -408,7 +405,15 @@ function CatalogoPublico() {
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
   const hasActiveFilters = Boolean(searchTerm.trim()) || selectedCategory !== "all"
-  const canUseCustomerAccounts = Boolean(token)
+  const canUseCustomerAccounts = Boolean(customerSession)
+
+  const selectStorefrontSection = (sections: CatalogStorefrontSection[]) => {
+    const section = requestedToken
+      ? sections.find((item) => item.token === requestedToken) ||
+        sections.find((item) => item.kind === "normal") || sections[0]
+      : sections.find((item) => item.kind === "normal") || sections[0]
+    return section
+  }
 
   const login = async () => {
     const identifier = loginIdentifier.trim()
@@ -424,10 +429,10 @@ function CatalogoPublico() {
 
     setAuthLoading(true)
     setAuthMessage("")
+    let authenticated = false
     try {
       const response = await invokeCatalogCustomerAccess(supabase, {
         action: "login",
-        token,
         ...(isEmail ? { email: identifier } : { phone: identifier }),
         password: loginPassword,
       })
@@ -436,92 +441,50 @@ function CatalogoPublico() {
         !customer || typeof customer !== "object" ||
         !("id" in customer) || typeof customer.id !== "string" ||
         !("name" in customer) || typeof customer.name !== "string" ||
-        !("phone" in customer) || typeof customer.phone !== "string") {
+        !("phone" in customer) || typeof customer.phone !== "string" ||
+        !("owner_admin_id" in customer) || typeof customer.owner_admin_id !== "string") {
         throw new Error("La función devolvió una respuesta de inicio de sesión inválida")
       }
 
       const session = {
         sessionToken: response.session_token,
-        customer: { id: customer.id, name: customer.name, phone: customer.phone },
+        ownerAdminId: customer.owner_admin_id,
+        customer: {
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+          owner_admin_id: customer.owner_admin_id,
+        },
       }
+      setToken("")
+      setProducts([])
+      setStorefrontSections([])
+      setCatalogReady(false)
+      setMessage("")
       setCustomerSession(session)
+      authenticated = true
       setName(session.customer.name)
       setPhone(session.customer.phone)
       setLoginPassword("")
       setLoginOpen(false)
       try {
         window.localStorage.setItem(
-          customerSessionStorageKey,
+          CUSTOMER_SESSION_STORAGE_KEY,
           JSON.stringify({ session_token: session.sessionToken }),
         )
       } catch (error) {
         console.error("No se pudo guardar la sesión del catálogo:", error)
-        setAuthMessage("Sesión iniciada, pero el navegador no pudo guardarla. Si cierras la pestaña, tendrás que volver a iniciar sesión.")
       }
+
+      const sections = await getStorefrontSections(supabase, session.ownerAdminId)
+      const section = selectStorefrontSection(sections)
+      setStorefrontSections(sections)
+      setMessage("")
+      setToken(section.token)
     } catch (error) {
-      setAuthMessage(errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente."))
-    } finally {
-      setAuthLoading(false)
-    }
-  }
-
-  const register = async () => {
-    if (!registrationName.trim()) {
-      setAuthMessage("Escribe tu nombre.")
-      return
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registrationEmail.trim())) {
-      setAuthMessage("Escribe un correo válido.")
-      return
-    }
-    if (!/^\d{10}$/.test(registrationPhone)) {
-      setAuthMessage("El teléfono debe tener exactamente 10 dígitos.")
-      return
-    }
-    if (registrationPassword.length < 8) {
-      setAuthMessage("La contraseña debe tener al menos 8 caracteres.")
-      return
-    }
-
-    setAuthLoading(true)
-    setAuthMessage("")
-    try {
-      const response = await invokeCatalogCustomerAccess(supabase, {
-        action: "register",
-        token,
-        name: registrationName.trim(),
-        email: registrationEmail.trim().toLowerCase(),
-        phone: registrationPhone,
-        password: registrationPassword,
-      })
-      const customer = response.customer
-      if (typeof response.session_token !== "string" ||
-        !customer || typeof customer !== "object" ||
-        !("id" in customer) || typeof customer.id !== "string" ||
-        !("name" in customer) || typeof customer.name !== "string" ||
-        !("phone" in customer) || typeof customer.phone !== "string") {
-        throw new Error("La función devolvió una respuesta de registro inválida")
-      }
-
-      const session = {
-        sessionToken: response.session_token,
-        customer: { id: customer.id, name: customer.name, phone: customer.phone },
-      }
-      setCustomerSession(session)
-      setName(session.customer.name)
-      setPhone(session.customer.phone)
-      setRegistrationPassword("")
-      try {
-        window.localStorage.setItem(
-          customerSessionStorageKey,
-          JSON.stringify({ session_token: session.sessionToken }),
-        )
-      } catch (error) {
-        console.error("No se pudo guardar la sesión del catálogo:", error)
-        setAuthMessage("Cuenta creada, pero el navegador no pudo guardar la sesión. Inicia sesión nuevamente.")
-      }
-    } catch (error) {
-      setAuthMessage(errorMessage(error, "No se pudo crear la cuenta. Inténtalo nuevamente."))
+      const description = errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente.")
+      if (authenticated) setMessage(description)
+      else setAuthMessage(description)
     } finally {
       setAuthLoading(false)
     }
@@ -540,14 +503,19 @@ function CatalogoPublico() {
       setAuthMessage(errorMessage(error, "No se pudo cerrar la sesión en el servidor."))
     } finally {
       try {
-        window.localStorage.removeItem(customerSessionStorageKey)
-        window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
+        window.localStorage.removeItem(CUSTOMER_SESSION_STORAGE_KEY)
+        if (token) window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
       } catch (error) {
         console.error("No se pudo borrar la sesión del catálogo:", error)
       }
       setCustomerSession(null)
       setName("")
       setPhone("")
+      setToken("")
+      setProducts([])
+      setStorefrontSections([])
+      setCatalogReady(false)
+      setMessage("")
       setAuthLoading(false)
     }
   }
@@ -590,63 +558,49 @@ function CatalogoPublico() {
     }
   }
 
-  if (loading) {
-    return <div className="state-screen"><div className="loader" /><p>Cargando catálogo</p></div>
-  }
-
-  if (message && !products.length) {
-    return <div className="state-screen"><div className="state-card"><span className="state-icon">!</span><h1>Catálogo no disponible</h1><p>{message}</p></div></div>
-  }
-
-  if (done) {
-    return <div className="state-screen"><div className="state-card"><button type="button" className="state-card-close" onClick={() => setDone(false)} aria-label="Cerrar confirmación del pedido">×</button><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
-  }
-
-  if (catalogReady && !customerSession) {
+  if (!customerSession) {
     return (
       <div className="state-screen">
         <div className="state-card">
           <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
-          <h1>{authMode === "register" ? "Crear cuenta" : "Iniciar sesión"}</h1>
-          <p>Regístrate o inicia sesión para ver los productos del catálogo.</p>
+          <h1>Iniciar sesión</h1>
+          <p>Usa el correo y la contraseña que te asignó el administrador del catálogo.</p>
           <div className="checkout-form">
-            {authMode === "register" ? (
-              <>
-                <input autoComplete="name" placeholder="Nombre completo" value={registrationName}
-                  onChange={(event) => setRegistrationName(event.target.value)} />
-                <input type="email" autoComplete="email" placeholder="Correo electrónico" value={registrationEmail}
-                  onChange={(event) => setRegistrationEmail(event.target.value)} />
-                <input type="tel" inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="Teléfono (10 dígitos)"
-                  value={registrationPhone}
-                  onChange={(event) => setRegistrationPhone(event.target.value.replace(/\D/g, "").slice(0, 10))} />
-                <input type="password" autoComplete="new-password" minLength={8} placeholder="Contraseña (mínimo 8 caracteres)"
-                  value={registrationPassword} onChange={(event) => setRegistrationPassword(event.target.value)} />
-                <button className="submit-button" disabled={authLoading} onClick={() => void register()}>
-                  {authLoading ? "Creando cuenta…" : "Crear cuenta y ver catálogo"}
-                </button>
-                <button type="button" className="text-button" onClick={() => { setAuthMode("login"); setAuthMessage("") }}>
-                  Ya tengo una cuenta
-                </button>
-              </>
-            ) : (
-              <>
-                <input autoComplete="username" placeholder="Correo electrónico o teléfono" value={loginIdentifier}
-                  onChange={(event) => setLoginIdentifier(event.target.value)} />
-                <input type="password" autoComplete="current-password" placeholder="Contraseña"
-                  value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
-                <button className="submit-button" disabled={authLoading} onClick={() => void login()}>
-                  {authLoading ? "Iniciando sesión…" : "Iniciar sesión"}
-                </button>
-                <button type="button" className="text-button" onClick={() => { setAuthMode("register"); setAuthMessage("") }}>
-                  Crear una cuenta nueva
-                </button>
-              </>
-            )}
+            <input autoComplete="username" placeholder="Correo electrónico o teléfono" value={loginIdentifier}
+              onChange={(event) => setLoginIdentifier(event.target.value)} />
+            <input type="password" autoComplete="current-password" placeholder="Contraseña"
+              value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
+            <button className="submit-button" disabled={authLoading || !loginIdentifier.trim() || !loginPassword} onClick={() => void login()}>
+              {authLoading ? "Iniciando sesión…" : "Iniciar sesión"}
+            </button>
             {authMessage && <p className="error-message" role="alert">{authMessage}</p>}
           </div>
         </div>
       </div>
     )
+  }
+
+  if (loading) {
+    return <div className="state-screen"><div className="loader" /><p>Cargando catálogo</p></div>
+  }
+
+  if (message && !products.length) {
+    return (
+      <div className="state-screen">
+        <div className="state-card">
+          <span className="state-icon">!</span>
+          <h1>Catálogo no disponible</h1>
+          <p>{message}</p>
+          <button type="button" className="account-button" onClick={() => void logout()} disabled={authLoading}>
+            {authLoading ? "Cerrando…" : "Cerrar sesión"}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (done) {
+    return <div className="state-screen"><div className="state-card"><button type="button" className="state-card-close" onClick={() => setDone(false)} aria-label="Cerrar confirmación del pedido">×</button><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
   }
 
   return (

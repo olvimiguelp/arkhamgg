@@ -224,6 +224,7 @@ export default function EmpleadosPage() {
   const [catalogCustomerView, setCatalogCustomerView] = useState<"customers" | "history">("customers")
   const [selectedCatalogCustomerKey, setSelectedCatalogCustomerKey] = useState<string | null>(null)
   const [catalogCustomerName, setCatalogCustomerName] = useState("")
+  const [catalogCustomerEmail, setCatalogCustomerEmail] = useState("")
   const [catalogCustomerPhone, setCatalogCustomerPhone] = useState("")
   const [catalogCustomerPassword, setCatalogCustomerPassword] = useState("")
   const [catalogCustomers, setCatalogCustomers] = useState<CatalogCustomerAccount[]>([])
@@ -233,7 +234,7 @@ export default function EmpleadosPage() {
   const [catalogHistoryNextOffset, setCatalogHistoryNextOffset] = useState(0)
   const [isLoadingCatalogCustomers, setIsLoadingCatalogCustomers] = useState(false)
   const [isCreatingCatalogCustomer, setIsCreatingCatalogCustomer] = useState(false)
-  const [createdCatalogCredentials, setCreatedCatalogCredentials] = useState<{ phone: string; password: string } | null>(null)
+  const [createdCatalogCredentials, setCreatedCatalogCredentials] = useState<{ email: string; phone: string; password: string } | null>(null)
   const almacenCatalogCategories = useMemo(() => {
     const options = new Map<string, string>()
     products.filter((product) => product.sourceTable === "armacen" ||
@@ -418,6 +419,10 @@ export default function EmpleadosPage() {
       toast({ title: "Nombre requerido", description: "Escribe el nombre del cliente.", variant: "destructive" })
       return
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim())) {
+      toast({ title: "Correo inválido", description: "Escribe un correo válido para el cliente.", variant: "destructive" })
+      return
+    }
     if (!/^\d{10}$/.test(catalogCustomerPhone)) {
       toast({ title: "Teléfono inválido", description: "El teléfono debe tener exactamente 10 dígitos.", variant: "destructive" })
       return
@@ -433,12 +438,18 @@ export default function EmpleadosPage() {
         action: "create",
         ...getCatalogStaffCredentials(),
         name: catalogCustomerName.trim(),
+        email: catalogCustomerEmail.trim().toLowerCase(),
         phone: catalogCustomerPhone,
         password: catalogCustomerPassword,
       })
       setCatalogCustomers((current) => [response.customer, ...current.filter((customer) => customer.id !== response.customer.id)])
-      setCreatedCatalogCredentials({ phone: response.customer.phone, password: catalogCustomerPassword })
+      setCreatedCatalogCredentials({
+        email: response.customer.email ?? catalogCustomerEmail.trim().toLowerCase(),
+        phone: response.customer.phone,
+        password: catalogCustomerPassword,
+      })
       setCatalogCustomerName("")
+      setCatalogCustomerEmail("")
       setCatalogCustomerPhone("")
       setCatalogCustomerPassword("")
       toast({ title: "Cuenta creada", description: "El cliente podrá iniciar sesión solo en el catálogo externo." })
@@ -458,14 +469,14 @@ export default function EmpleadosPage() {
     if (!createdCatalogCredentials) return
     try {
       await navigator.clipboard.writeText(
-        `Teléfono: ${createdCatalogCredentials.phone}\nContraseña: ${createdCatalogCredentials.password}`,
+        `Correo: ${createdCatalogCredentials.email}\nTeléfono: ${createdCatalogCredentials.phone}\nContraseña: ${createdCatalogCredentials.password}`,
       )
       toast({ title: "Credenciales copiadas" })
     } catch (error) {
       console.error("Error al copiar credenciales del catálogo:", error)
       toast({
         title: "No se pudieron copiar",
-        description: "Copia el teléfono y la contraseña manualmente antes de cerrar esta ventana.",
+        description: "Copia el correo, teléfono y contraseña manualmente antes de cerrar esta ventana.",
         variant: "destructive",
       })
     }
@@ -1324,7 +1335,7 @@ export default function EmpleadosPage() {
           <DialogHeader>
             <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
             <DialogDescription>
-              Usa un solo enlace compartido del catálogo para todos los clientes. Cada cliente inicia sesión con su teléfono y contraseña; las cuentas exclusivas aparecen aquí aunque todavía no hayan realizado pedidos.
+              Crea cada cuenta con un correo y una contraseña. El cliente inicia sesión desde el enlace principal del catálogo y queda vinculado a tu empresa; las cuentas aparecen aquí aunque todavía no hayan realizado pedidos.
             </DialogDescription>
           </DialogHeader>
 
@@ -1334,6 +1345,7 @@ export default function EmpleadosPage() {
                 <div className="flex flex-col gap-3 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-semibold">Cuenta creada. Comparte las credenciales con el cliente.</p>
+                    <p>Correo: {createdCatalogCredentials.email}</p>
                     <p>Teléfono: {createdCatalogCredentials.phone}</p>
                     <p>Contraseña: {createdCatalogCredentials.password}</p>
                     <p className="text-xs">La contraseña no se guarda en texto y no podrá recuperarse después de cerrar esta ventana.</p>
@@ -1350,7 +1362,7 @@ export default function EmpleadosPage() {
                   Tu usuario puede consultar las cuentas y el historial, pero no tiene permiso para crear cuentas nuevas.
                 </p>
               )}
-              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-3">
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="space-y-2">
                   <Label htmlFor="catalog-customer-name">Nombre del cliente</Label>
                   <Input
@@ -1359,6 +1371,18 @@ export default function EmpleadosPage() {
                     value={catalogCustomerName}
                     onChange={(event) => setCatalogCustomerName(event.target.value)}
                     placeholder="Nombre completo"
+                    disabled={isCreatingCatalogCustomer}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="catalog-customer-email">Correo del cliente</Label>
+                  <Input
+                    id="catalog-customer-email"
+                    type="email"
+                    autoComplete="email"
+                    value={catalogCustomerEmail}
+                    onChange={(event) => setCatalogCustomerEmail(event.target.value)}
+                    placeholder="cliente@correo.com"
                     disabled={isCreatingCatalogCustomer}
                   />
                 </div>
@@ -1390,12 +1414,13 @@ export default function EmpleadosPage() {
                 </div>
                 <Button
                   type="button"
-                  className="sm:col-span-3"
+                  className="sm:col-span-2 lg:col-span-4"
                   onClick={() => void handleCreateCatalogCustomer()}
                   disabled={
                     isCreatingCatalogCustomer ||
                     !canAddEmployees ||
                     !catalogCustomerName.trim() ||
+                    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(catalogCustomerEmail.trim()) ||
                     !/^\d{10}$/.test(catalogCustomerPhone) ||
                     catalogCustomerPassword.length < 8
                   }

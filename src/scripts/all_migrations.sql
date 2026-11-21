@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-11-21 14:10:51 -04:00
+-- Generado: 2026-11-21 15:18:10 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -5563,10 +5563,20 @@ $$;
 REVOKE ALL ON FUNCTION public.submit_catalog_order_for_customer(TEXT, UUID, JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_catalog_order_for_customer(TEXT, UUID, JSONB) TO service_role;
 
+-- ====================================================
+-- Source: 085-catalog-customer-email-global-unique.sql
+-- ====================================================
+
+DROP INDEX IF EXISTS public.catalog_customer_accounts_owner_email_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS catalog_customer_accounts_email_global_key
+  ON public.catalog_customer_accounts(lower(email))
+  WHERE email IS NOT NULL;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (87):
+-- Archivos concatenados (88):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -5654,3 +5664,4 @@ GRANT EXECUTE ON FUNCTION public.submit_catalog_order_for_customer(TEXT, UUID, J
 --   - 081-editable-catalog-links.sql
 --   - 082-catalog-storefront-publication.sql
 --   - 084-catalog-customer-email-registration.sql
+--   - 085-catalog-customer-email-global-unique.sql
