@@ -62,7 +62,7 @@ import {
   type CatalogOrderCustomer,
   type CatalogOrderHistory,
 } from "@/lib/catalog-customer-access"
-import { ALMACEN_CATEGORY_OPTIONS, getAlmacenCategoryFilterValue, getAlmacenCategoryLabel, isAlmacenCategory } from "@/lib/almacen"
+import { getAlmacenCategoryFilterValue, getAlmacenCategoryLabel, isAlmacenCategory } from "@/lib/almacen"
 
 const readAccessFlag = (value: any): boolean => {
   if (typeof value === "boolean") return value
@@ -124,6 +124,7 @@ type CatalogCustomerDirectoryEntry = {
   key: string
   accountId: string | null
   name: string
+  email: string
   phone: string
   phoneVariants: string[]
   isActive: boolean | null
@@ -234,7 +235,7 @@ export default function EmpleadosPage() {
   const [isCreatingCatalogCustomer, setIsCreatingCatalogCustomer] = useState(false)
   const [createdCatalogCredentials, setCreatedCatalogCredentials] = useState<{ phone: string; password: string } | null>(null)
   const almacenCatalogCategories = useMemo(() => {
-    const options = new Map(ALMACEN_CATEGORY_OPTIONS.map(({ value, label }) => [String(value), label]))
+    const options = new Map<string, string>()
     products.filter((product) => product.sourceTable === "armacen" ||
       (!product.sourceTable && (Boolean(product.boxNumber) || isAlmacenCategory(product.category))))
       .forEach((product) => {
@@ -259,6 +260,7 @@ export default function EmpleadosPage() {
         key,
         accountId: customer.id,
         name: customer.name,
+        email: customer.email ?? "",
         phone: customer.phone,
         phoneVariants: [customer.phone],
         isActive: customer.is_active,
@@ -280,6 +282,7 @@ export default function EmpleadosPage() {
         key,
         accountId: account?.id ?? buyer.catalog_customer_id,
         name: account?.name ?? existing?.name ?? buyer.customer_name,
+        email: account?.email ?? existing?.email ?? "",
         phone: account?.phone ?? existing?.phone ?? buyer.customer_phone,
         phoneVariants: Array.from(new Set([
           account?.phone ?? "",
@@ -1417,6 +1420,7 @@ export default function EmpleadosPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Cliente</TableHead>
+                        <TableHead>Correo</TableHead>
                         <TableHead>Teléfono</TableHead>
                         <TableHead>Pedidos</TableHead>
                         <TableHead>Último pedido</TableHead>
@@ -1428,6 +1432,7 @@ export default function EmpleadosPage() {
                       {catalogCustomerDirectory.map((customer) => (
                         <TableRow key={customer.key}>
                           <TableCell className="font-medium">{customer.name}</TableCell>
+                          <TableCell>{customer.email || "—"}</TableCell>
                           <TableCell>{customer.phone}</TableCell>
                           <TableCell>{customer.orderCount}</TableCell>
                           <TableCell>

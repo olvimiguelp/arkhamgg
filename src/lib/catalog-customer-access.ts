@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/client"
 export type CatalogCustomerAccount = {
   id: string
   name: string
+  email: string | null
   phone: string
   is_active: boolean
   created_at: string

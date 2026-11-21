@@ -18,6 +18,7 @@ type RequestBody = {
   actor_id?: string
   actor_password?: string
   name?: string
+  email?: string
   phone?: string
   password?: string
   token?: string
@@ -133,7 +134,7 @@ async function requireStaff(
   return { id: employee.id, ownerAdminId }
 }
 
-async function requireWarehouseShare(supabase: ReturnType<typeof createClient>, token: unknown) {
+async function requireActiveCatalogShare(supabase: ReturnType<typeof createClient>, token: unknown) {
   const catalogToken = requireText(token, "El enlace del catálogo")
   const { data: share, error } = await supabase
     .from("catalog_shares")
@@ -145,10 +146,10 @@ async function requireWarehouseShare(supabase: ReturnType<typeof createClient>, 
   if (error) throw new RequestError("No se pudo validar el enlace del catálogo", 503)
   if (
     !share ||
-    share.source_table !== "armacen" ||
+    !["products", "armacen"].includes(share.source_table) ||
     (share.expires_at && new Date(share.expires_at).getTime() <= Date.now())
   ) {
-    throw new RequestError("Este enlace no corresponde a un catálogo de almacén activo", 404)
+    throw new RequestError("Este enlace no corresponde a un catálogo activo", 404)
   }
 
   return { token: catalogToken, ownerAdminId: share.owner_admin_id as string }
@@ -186,6 +187,26 @@ async function resolveCustomerSession(
   return { id: customer.id, name: customer.name, phone: customer.phone }
 }
 
+async function startCustomerSession(
+  supabase: ReturnType<typeof createClient>,
+  customer: { id: string; name: string; phone: string },
+) {
+  const sessionToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+  const expiresAt = new Date(Date.now() + sessionLifetimeDays * 24 * 60 * 60 * 1000).toISOString()
+  const { error } = await supabase.from("catalog_customer_sessions").insert({
+    customer_id: customer.id,
+    token_hash: await sha256Hex(sessionToken),
+    expires_at: expiresAt,
+  })
+  if (error) throw new RequestError("No se pudo iniciar la sesión del cliente", 500)
+
+  return {
+    session_token: sessionToken,
+    expires_at: expiresAt,
+    customer: { id: customer.id, name: customer.name, phone: customer.phone },
+  }
+}
+
 async function handleRequest(
   supabase: ReturnType<typeof createClient>,
   body: RequestBody,
@@ -209,7 +230,7 @@ async function handleRequest(
         password_salt: bytesToBase64Url(salt),
         password_hash: bytesToBase64Url(passwordHash),
       })
-      .select("id, name, phone, is_active, created_at")
+      .select("id, name, email, phone, is_active, created_at")
       .single()
 
     if (error?.code === "23505") throw new RequestError("Ya existe una cuenta con ese teléfono", 409)
@@ -221,7 +242,7 @@ async function handleRequest(
     const actor = await requireStaff(supabase, body, "overview")
     const customersResult = await supabase
       .from("catalog_customer_accounts")
-      .select("id, name, phone, is_active, created_at")
+      .select("id, name, email, phone, is_active, created_at")
       .eq("owner_admin_id", actor.ownerAdminId)
       .order("created_at", { ascending: false })
       .limit(500)
@@ -335,47 +356,67 @@ async function handleRequest(
   }
 
   if (body.action === "login") {
-    const share = await requireWarehouseShare(supabase, body.token)
-    const phone = requireText(body.phone, "El teléfono")
+    const share = await requireActiveCatalogShare(supabase, body.token)
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
+    const phone = typeof body.phone === "string" ? body.phone.trim() : ""
+    if (!email && !phone) throw new RequestError("El correo o teléfono es obligatorio", 400)
     const password = requireText(body.password, "La contraseña")
-    if (!/^\d{10}$/.test(phone)) throw new RequestError("El teléfono debe tener exactamente 10 dígitos", 400)
+    if (!email && !/^\d{10}$/.test(phone)) throw new RequestError("El teléfono debe tener exactamente 10 dígitos", 400)
 
-    const { data: customer, error } = await supabase
+    let customerQuery = supabase
       .from("catalog_customer_accounts")
       .select("id, name, phone, password_salt, password_hash")
       .eq("owner_admin_id", share.ownerAdminId)
-      .eq("phone", phone)
       .eq("is_active", true)
+    customerQuery = email ? customerQuery.eq("email", email) : customerQuery.eq("phone", phone)
+    const { data: customer, error } = await customerQuery
       .maybeSingle()
 
     if (error) throw new RequestError("No se pudo validar la cuenta", 503)
-    if (!customer) throw new RequestError("Teléfono o contraseña incorrectos", 401)
+    if (!customer) throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
 
     const salt = base64UrlToBytes(customer.password_salt)
     const expectedHash = base64UrlToBytes(customer.password_hash)
     const actualHash = await derivePasswordHash(password, salt)
     if (!equalBytes(actualHash, expectedHash)) {
-      throw new RequestError("Teléfono o contraseña incorrectos", 401)
+      throw new RequestError("Correo/teléfono o contraseña incorrectos", 401)
     }
 
-    const sessionToken = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)))
-    const expiresAt = new Date(Date.now() + sessionLifetimeDays * 24 * 60 * 60 * 1000).toISOString()
-    const { error: sessionError } = await supabase.from("catalog_customer_sessions").insert({
-      customer_id: customer.id,
-      token_hash: await sha256Hex(sessionToken),
-      expires_at: expiresAt,
-    })
-    if (sessionError) throw new RequestError("No se pudo iniciar la sesión del cliente", 500)
+    return await startCustomerSession(supabase, customer)
+  }
 
-    return {
-      session_token: sessionToken,
-      expires_at: expiresAt,
-      customer: { id: customer.id, name: customer.name, phone: customer.phone },
-    }
+  if (body.action === "register") {
+    const share = await requireActiveCatalogShare(supabase, body.token)
+    const name = requireText(body.name, "El nombre")
+    const email = requireText(body.email, "El correo").trim().toLowerCase()
+    const phone = requireText(body.phone, "El teléfono")
+    const password = requireText(body.password, "La contraseña")
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new RequestError("El correo no es válido", 400)
+    if (!/^\d{10}$/.test(phone)) throw new RequestError("El teléfono debe tener exactamente 10 dígitos", 400)
+    if (password.length < 8) throw new RequestError("La contraseña debe tener al menos 8 caracteres", 400)
+
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const passwordHash = await derivePasswordHash(password, salt)
+    const { data: customer, error } = await supabase
+      .from("catalog_customer_accounts")
+      .insert({
+        owner_admin_id: share.ownerAdminId,
+        name: name.trim(),
+        email,
+        phone,
+        password_salt: bytesToBase64Url(salt),
+        password_hash: bytesToBase64Url(passwordHash),
+      })
+      .select("id, name, phone")
+      .single()
+
+    if (error?.code === "23505") throw new RequestError("Ya existe una cuenta con ese correo o teléfono", 409)
+    if (error) throw new RequestError("No se pudo crear la cuenta del catálogo", 500)
+    return await startCustomerSession(supabase, customer)
   }
 
   if (body.action === "session") {
-    const share = await requireWarehouseShare(supabase, body.token)
+    const share = await requireActiveCatalogShare(supabase, body.token)
     const customer = await resolveCustomerSession(supabase, body.session_token, share.ownerAdminId)
     return { customer }
   }
@@ -392,7 +433,7 @@ async function handleRequest(
   }
 
   if (body.action === "order") {
-    const share = await requireWarehouseShare(supabase, body.token)
+    const share = await requireActiveCatalogShare(supabase, body.token)
     const customer = await resolveCustomerSession(supabase, body.session_token, share.ownerAdminId)
     if (!Array.isArray(body.items) || body.items.length === 0) {
       throw new RequestError("El carrito está vacío", 400)

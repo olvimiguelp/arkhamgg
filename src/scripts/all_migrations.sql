@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-11-21 11:31:01 -04:00
+-- Generado: 2026-11-21 14:10:51 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -5149,10 +5149,424 @@ BEGIN
 END;
 $$;
 
+-- ====================================================
+-- Source: 080-shared-catalog-categories.sql
+-- ====================================================
+
+-- Category names belong to the business, independently of its public links.
+CREATE SCHEMA IF NOT EXISTS catalog_private;
+REVOKE ALL ON SCHEMA catalog_private FROM PUBLIC, anon, authenticated;
+CREATE TABLE catalog_private.managed_categories (
+  owner_admin_id uuid NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
+  source_table text NOT NULL CHECK (source_table IN ('products', 'armacen')),
+  name text NOT NULL CHECK (btrim(name) <> ''),
+  name_key text GENERATED ALWAYS AS (lower(name)) STORED,
+  PRIMARY KEY (owner_admin_id, source_table, name_key)
+);
+
+CREATE FUNCTION catalog_private.shared_warehouse_category(owner_id uuid, category_name text)
+RETURNS boolean LANGUAGE sql STABLE SET search_path = '' AS $$
+  SELECT EXISTS (SELECT FROM catalog_private.managed_categories c WHERE c.owner_admin_id = owner_id
+    AND c.source_table = 'armacen' AND c.name_key = public.normalize_catalog_almacen_category(category_name))
+$$;
+
+-- Staff sessions use employee credentials. Derive the owner from the verified
+-- employee, and commit legacy imports and individual edits atomically.
+CREATE FUNCTION public.manage_catalog_categories(
+  actor_id uuid, actor_password text, add_names text[] DEFAULT '{}', remove_name text DEFAULT NULL, catalog_source text DEFAULT 'products'
+) RETURNS text[] LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  staff public.employees%ROWTYPE;
+  owner_id uuid;
+BEGIN
+  SELECT * INTO staff FROM public.employees e WHERE e.id = actor_id
+    AND e.status = 'active' AND e.password = actor_password AND btrim(actor_password) <> '';
+  IF catalog_source IS NULL OR catalog_source NOT IN ('armacen','products') THEN RAISE EXCEPTION 'Catálogo inválido'; END IF;
+  IF staff.id IS NULL OR (catalog_source = 'armacen' AND staff.role IS DISTINCT FROM 'admin') OR (staff.role IS DISTINCT FROM 'admin' AND NOT (
+      coalesce((staff.permissions->>'products')::boolean, false)
+      AND (cardinality(add_names) = 0 OR coalesce((staff.permissions->>'canAdd')::boolean, false))
+      AND (remove_name IS NULL OR coalesce((staff.permissions->>'canDelete')::boolean, false))
+    )) THEN RAISE EXCEPTION 'Sin permiso para gestionar categorías'; END IF;
+  owner_id := CASE WHEN staff.role = 'admin' THEN staff.id ELSE staff.owner_admin_id END;
+  IF owner_id IS NULL THEN RAISE EXCEPTION 'Empresa no asignada'; END IF;
+  IF remove_name IS NOT NULL THEN
+    IF catalog_source = 'products' AND EXISTS (SELECT FROM public.products WHERE owner_admin_id = owner_id AND lower(category) = lower(remove_name)) THEN
+      RAISE EXCEPTION 'La categoría tiene productos asignados';
+    END IF;
+    DELETE FROM catalog_private.managed_categories WHERE owner_admin_id = owner_id AND source_table = catalog_source AND name_key = lower(remove_name);
+  END IF;
+  INSERT INTO catalog_private.managed_categories(owner_admin_id, source_table, name)
+    SELECT owner_id, catalog_source, CASE WHEN catalog_source = 'armacen' THEN public.normalize_catalog_almacen_category(n) ELSE btrim(n) END FROM unnest(add_names) n WHERE btrim(n) <> ''
+    ON CONFLICT DO NOTHING;
+  RETURN ARRAY(SELECT name FROM catalog_private.managed_categories WHERE owner_admin_id = owner_id AND source_table = catalog_source ORDER BY name);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.manage_catalog_categories(uuid,text,text[],text,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.manage_catalog_categories(uuid,text,text[],text,text) TO anon, authenticated;
+
+DO $$
+DECLARE
+  signature regprocedure;
+  def text;
+  membership text := 'public.catalog_share_includes_almacen_category(share_row.category_filter, a.category)';
+  scope text;
+  shared_names text := 'SELECT c.name FROM catalog_private.managed_categories c WHERE c.owner_admin_id = share_row.owner_admin_id AND c.source_table = share_row.source_table';
+BEGIN
+  FOREACH signature IN ARRAY ARRAY[
+    'public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::regprocedure,
+    'public.get_public_catalog_products(text,integer,integer,text,text)'::regprocedure,
+    'public.get_public_catalog_categories(text)'::regprocedure,
+    'public.submit_catalog_order(text,text,text,jsonb)'::regprocedure
+  ] LOOP
+    def := pg_get_functiondef(signature);
+    IF strpos(def, membership) = 0 THEN RAISE EXCEPTION 'Missing warehouse scope in %', signature; END IF;
+    def := replace(def, membership, '(' || membership || ' OR catalog_private.shared_warehouse_category(share_row.owner_admin_id, a.category))');
+    IF signature = 'public.submit_catalog_order(text,text,text,jsonb)'::regprocedure THEN
+      scope := '(a.id = ANY (share_row.product_ids) OR a.created_at >= share_row.created_at)';
+      IF strpos(def,scope) = 0 THEN RAISE EXCEPTION 'Missing order scope'; END IF;
+      def := replace(def, scope, '(' || scope || ' OR catalog_private.shared_warehouse_category(share_row.owner_admin_id, a.category))');
+    ELSE
+      scope := '(p.id = ANY (share_row.product_ids) OR p.created_at >= share_row.created_at)';
+      IF strpos(def,scope) = 0 THEN RAISE EXCEPTION 'Missing inventory scope'; END IF;
+      def := replace(def, scope, '(' || scope || ' OR (share_row.source_table = ''armacen'' AND catalog_private.shared_warehouse_category(share_row.owner_admin_id, p.category)))');
+    END IF;
+    IF signature = 'public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::regprocedure THEN
+      IF strpos(def, ') AS visible_categories') = 0 THEN RAISE EXCEPTION 'Missing category list'; END IF;
+      def := replace(def, ') AS visible_categories', ' UNION ' || shared_names || ') AS visible_categories');
+      -- A formerly fixed warehouse link becomes filterable as its selection grows.
+      def := replace(def, '''category_filter'', CASE WHEN', '''category_filter'', CASE WHEN (jsonb_array_length(catalog_categories) > 1 OR (jsonb_array_length(catalog_categories) = 1 AND catalog_categories->>0 <> share_row.category_filter)) THEN NULL WHEN');
+    ELSIF signature = 'public.get_public_catalog_categories(text)'::regprocedure THEN
+      IF strpos(def, 'ORDER BY p.category') = 0 THEN RAISE EXCEPTION 'Missing category order'; END IF;
+      def := replace(def, 'ORDER BY p.category', ' UNION SELECT n::varchar(100) FROM (' || shared_names || ') names(n) ORDER BY 1');
+    END IF;
+    EXECUTE def;
+  END LOOP;
+END;
+$$;
+
+-- ====================================================
+-- Source: 081-editable-catalog-links.sql
+-- ====================================================
+
+-- Each new customer link retains its own explicit warehouse selection.
+ALTER TABLE public.catalog_shares ADD COLUMN individual_categories boolean NOT NULL DEFAULT false;
+
+CREATE FUNCTION catalog_private.link_categories(filter_value text)
+RETURNS text[] LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT ARRAY(SELECT DISTINCT public.normalize_catalog_almacen_category(name)
+    FROM jsonb_array_elements_text(CASE WHEN left(filter_value,5) = 'json:'
+      THEN substring(filter_value FROM 6)::jsonb ELSE jsonb_build_array(filter_value) END) AS names(name)
+    WHERE btrim(name) <> '' ORDER BY 1)
+$$;
+
+DO $$
+DECLARE
+  signature regprocedure;
+  def text;
+  shared_categories text := 'catalog_private.shared_warehouse_category(share_row.owner_admin_id, ';
+  old_list text := 'c.source_table = share_row.source_table';
+  new_list text := 'c.source_table = share_row.source_table AND NOT share_row.individual_categories
+    UNION SELECT unnest(catalog_private.link_categories(share_row.category_filter)) WHERE share_row.individual_categories';
+BEGIN
+  FOREACH signature IN ARRAY ARRAY[
+    'public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::regprocedure,
+    'public.get_public_catalog_products(text,integer,integer,text,text)'::regprocedure,
+    'public.get_public_catalog_categories(text)'::regprocedure,
+    'public.submit_catalog_order(text,text,text,jsonb)'::regprocedure
+  ] LOOP
+    def := pg_get_functiondef(signature);
+    IF strpos(def,shared_categories) = 0 THEN RAISE EXCEPTION 'Falta el filtro de almacén en %',signature; END IF;
+    def := replace(def, 'OR ' || shared_categories || 'a.category)', 'OR (NOT share_row.individual_categories AND ' || shared_categories || 'a.category))');
+    def := replace(def, 'AND ' || shared_categories || 'p.category)', 'AND NOT share_row.individual_categories AND ' || shared_categories || 'p.category)');
+    IF signature IN ('public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::regprocedure,
+                     'public.get_public_catalog_categories(text)'::regprocedure) THEN
+      IF strpos(def,old_list) = 0 THEN RAISE EXCEPTION 'Falta la lista de categorías en %',signature; END IF;
+      def := replace(def,old_list,new_list);
+    END IF;
+    EXECUTE def;
+  END LOOP;
+END;
+$$;
+
+-- A row lock serializes concurrent additions and keeps the category filter and
+-- the IDs of pre-existing items in the newly enabled categories consistent.
+CREATE FUNCTION public.extend_warehouse_catalog_link(
+  actor_id uuid, actor_password text, catalog_token text, add_categories text[] DEFAULT '{}'
+) RETURNS text[] LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  share public.catalog_shares%ROWTYPE;
+  assigned text[];
+  additions text[];
+BEGIN
+  IF NOT EXISTS (SELECT FROM public.employees e WHERE e.id = actor_id AND e.role = 'admin'
+    AND e.status = 'active' AND e.password = actor_password AND btrim(actor_password) <> '') THEN
+    RAISE EXCEPTION 'Se requiere una sesión de administrador activa';
+  END IF;
+
+  SELECT * INTO share FROM public.catalog_shares s WHERE s.token = catalog_token AND s.active
+    AND s.source_table = 'armacen' AND s.owner_admin_id = actor_id
+    AND (s.expires_at IS NULL OR s.expires_at > now()) FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'El enlace de almacén no está activo o no pertenece a tu empresa'; END IF;
+
+  assigned := catalog_private.link_categories(share.category_filter);
+  additions := ARRAY(SELECT DISTINCT public.normalize_catalog_almacen_category(n) FROM unnest(add_categories) n
+    WHERE btrim(n) <> '' AND NOT (public.normalize_catalog_almacen_category(n) = ANY(assigned)));
+  IF cardinality(additions) > 0 THEN
+    assigned := ARRAY(SELECT DISTINCT n FROM unnest(assigned || additions) n ORDER BY n);
+    UPDATE public.catalog_shares SET
+      category_filter = 'json:' || to_jsonb(assigned)::text,
+      product_ids = ARRAY(SELECT unnest(share.product_ids) UNION SELECT a.id FROM public.armacen a
+        WHERE a.owner_admin_id = actor_id AND public.normalize_catalog_almacen_category(a.category) = ANY(additions))
+    WHERE id = share.id;
+  END IF;
+
+  RETURN ARRAY(SELECT unnest(assigned) UNION SELECT c.name FROM catalog_private.managed_categories c
+    WHERE NOT share.individual_categories AND c.owner_admin_id = actor_id AND c.source_table = 'armacen' ORDER BY 1);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.extend_warehouse_catalog_link(uuid,text,text,text[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.extend_warehouse_catalog_link(uuid,text,text,text[]) TO anon, authenticated;
+
+-- ====================================================
+-- Source: 082-catalog-storefront-publication.sql
+-- ====================================================
+
+-- NULL retains the historical ID-based selection. An empty array means all
+-- categories of this share's source and price mode, including future products.
+ALTER TABLE public.catalog_shares ADD COLUMN catalog_categories text[];
+CREATE TABLE catalog_private.storefront_sections (
+  owner_id uuid NOT NULL REFERENCES public.employees(id) ON DELETE CASCADE,
+  kind text NOT NULL CHECK (kind IN ('normal','wholesale','warehouse')),
+  share_id uuid NOT NULL UNIQUE REFERENCES public.catalog_shares(id) ON DELETE CASCADE,
+  PRIMARY KEY (owner_id,kind)
+);
+
+DO $$
+DECLARE
+  signature regprocedure;
+  def text;
+  alias text;
+  old_scope text;
+  new_scope text;
+  warehouse_filter text := 'public.catalog_share_includes_almacen_category(share_row.category_filter, a.category)';
+BEGIN
+  FOREACH signature IN ARRAY ARRAY[
+    'public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::regprocedure,
+    'public.get_public_catalog_products(text,integer,integer,text,text)'::regprocedure,
+    'public.get_public_catalog_categories(text)'::regprocedure,
+    'public.submit_catalog_order(text,text,text,jsonb)'::regprocedure
+  ] LOOP
+    def := pg_get_functiondef(signature);
+    IF strpos(def,warehouse_filter) = 0 THEN RAISE EXCEPTION 'Missing warehouse filter in %',signature; END IF;
+    def := replace(def,warehouse_filter,'(share_row.catalog_categories IS NOT NULL OR ' || warehouse_filter || ')');
+    FOREACH alias IN ARRAY ARRAY['p','a'] LOOP
+      old_scope := alias || '.owner_admin_id = share_row.owner_admin_id AND ';
+      IF strpos(def,old_scope) = 0 THEN
+        IF alias = 'p' OR signature = 'public.submit_catalog_order(text,text,text,jsonb)'::regprocedure THEN
+          RAISE EXCEPTION 'Missing owner scope in %',signature;
+        END IF;
+        CONTINUE;
+      END IF;
+      new_scope := alias || '.owner_admin_id = share_row.owner_admin_id AND (share_row.catalog_categories IS NULL OR
+        cardinality(share_row.catalog_categories) = 0 OR (CASE WHEN share_row.source_table = ''armacen''
+        THEN public.normalize_catalog_almacen_category(' || alias || '.category) ELSE ' || alias || '.category END) = ANY(share_row.catalog_categories)) AND ';
+      def := replace(def,old_scope,new_scope);
+      def := replace(def,alias || '.id = ANY (share_row.product_ids)', '(share_row.catalog_categories IS NOT NULL OR ' || alias || '.id = ANY (share_row.product_ids))');
+    END LOOP;
+    def := replace(def,'unnest(catalog_private.link_categories(share_row.category_filter))',
+      'unnest(coalesce(share_row.catalog_categories,catalog_private.link_categories(share_row.category_filter)))');
+    def := replace(def,'''category_filter'', CASE WHEN','''category_filter'', CASE WHEN share_row.catalog_categories IS NOT NULL THEN NULL WHEN');
+    EXECUTE def;
+  END LOOP;
+END;
+$$;
+
+-- Governed shares are created and updated only through staff-validated RPCs.
+CREATE FUNCTION catalog_private.protect_configured_share() RETURNS trigger LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+  IF current_user IN ('anon','authenticated') AND (
+    (TG_OP <> 'INSERT' AND OLD.catalog_categories IS NOT NULL) OR
+    (TG_OP <> 'DELETE' AND NEW.catalog_categories IS NOT NULL)
+  ) THEN RAISE EXCEPTION 'Usa la administración del catálogo'; END IF;
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER protect_configured_share BEFORE INSERT OR UPDATE OR DELETE ON public.catalog_shares
+  FOR EACH ROW EXECUTE FUNCTION catalog_private.protect_configured_share();
+
+CREATE FUNCTION public.catalog_storefront_sections(p_owner uuid)
+RETURNS TABLE(kind text, token text, categories text[]) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT f.kind,s.token,s.catalog_categories FROM catalog_private.storefront_sections f
+  JOIN public.catalog_shares s ON s.id=f.share_id AND s.owner_admin_id=f.owner_id
+  WHERE f.owner_id=p_owner AND s.active AND (s.expires_at IS NULL OR s.expires_at > now())
+  ORDER BY CASE f.kind WHEN 'normal' THEN 1 WHEN 'wholesale' THEN 2 ELSE 3 END
+$$;
+
+CREATE FUNCTION public.configure_catalog_publication(actor_id uuid, actor_password text,
+  p_kind text, p_categories text[], p_home boolean, p_visible boolean DEFAULT true)
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  staff public.employees%ROWTYPE;
+  owner_id uuid;
+  category_names text[];
+  section_id uuid;
+  result_token text;
+BEGIN
+  SELECT * INTO staff FROM public.employees WHERE id=actor_id AND status='active' AND password=actor_password AND btrim(actor_password)<>'';
+  IF NOT FOUND OR (staff.role IS DISTINCT FROM 'admin' AND (p_home OR NOT coalesce((staff.permissions->>'employees')::boolean,false))) THEN
+    RAISE EXCEPTION 'Sin permiso para publicar este catálogo';
+  END IF;
+  IF p_kind IS NULL OR p_kind NOT IN ('normal','wholesale','warehouse') OR p_categories IS NULL OR p_home IS NULL OR p_visible IS NULL THEN
+    RAISE EXCEPTION 'Selección de catálogo inválida';
+  END IF;
+  owner_id := CASE WHEN staff.role='admin' THEN staff.id ELSE staff.owner_admin_id END;
+  IF owner_id IS NULL THEN RAISE EXCEPTION 'Empresa no asignada'; END IF;
+  category_names := ARRAY(SELECT DISTINCT CASE WHEN p_kind='warehouse' THEN public.normalize_catalog_almacen_category(n) ELSE n END
+    FROM unnest(p_categories) n WHERE btrim(n)<>'' ORDER BY 1);
+  IF cardinality(p_categories)>0 AND cardinality(category_names)=0 THEN RAISE EXCEPTION 'Selecciona una categoría'; END IF;
+  IF p_home THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended(owner_id::text || p_kind,0));
+    SELECT f.share_id INTO section_id FROM catalog_private.storefront_sections f
+      WHERE f.owner_id=staff.id AND f.kind=p_kind;
+  END IF;
+  IF section_id IS NOT NULL THEN
+    UPDATE public.catalog_shares SET active=p_visible,catalog_categories=category_names
+      WHERE id=section_id RETURNING token INTO result_token;
+  ELSIF p_visible THEN
+    INSERT INTO public.catalog_shares(owner_admin_id,token,business_name,source_table,price_mode,category_filter,individual_categories,catalog_categories,product_ids)
+    VALUES(owner_id,replace(gen_random_uuid()::text,'-',''),'Catálogo 049',
+      CASE WHEN p_kind='warehouse' THEN 'armacen' ELSE 'products' END,
+      CASE WHEN p_kind='wholesale' THEN 'wholesale' ELSE 'normal' END,
+      CASE WHEN p_kind='warehouse' THEN 'json:[]' END,true,category_names,'{}')
+    RETURNING id,token INTO section_id,result_token;
+    IF p_home THEN INSERT INTO catalog_private.storefront_sections VALUES(owner_id,p_kind,section_id); END IF;
+  END IF;
+  RETURN result_token;
+END;
+$$;
+
+CREATE FUNCTION public.manage_customer_catalog(actor_id uuid,actor_password text,p_token text,p_add text[] DEFAULT '{}')
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  share public.catalog_shares%ROWTYPE;
+  assigned text[];
+  kind text;
+BEGIN
+  IF NOT EXISTS (SELECT FROM public.employees WHERE id=actor_id AND role='admin' AND status='active' AND password=actor_password AND btrim(actor_password)<>'') THEN
+    RAISE EXCEPTION 'Se requiere una sesión de administrador activa';
+  END IF;
+  SELECT * INTO share FROM public.catalog_shares s WHERE s.owner_admin_id=actor_id AND s.token=p_token
+    AND active AND (expires_at IS NULL OR expires_at>now())
+    AND NOT EXISTS (SELECT FROM catalog_private.storefront_sections f WHERE f.share_id=s.id) FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Enlace de cliente no disponible'; END IF;
+  kind := CASE WHEN share.source_table='armacen' THEN 'warehouse' ELSE share.price_mode END;
+  IF share.catalog_categories IS NULL AND kind='warehouse' THEN
+    assigned := public.extend_warehouse_catalog_link(actor_id,actor_password,p_token,p_add);
+  ELSE
+    assigned := coalesce(share.catalog_categories,'{}');
+    IF cardinality(assigned)>0 AND cardinality(p_add)>0 THEN
+      assigned := ARRAY(SELECT DISTINCT CASE WHEN kind='warehouse' THEN public.normalize_catalog_almacen_category(n) ELSE n END
+        FROM unnest(assigned || p_add) n WHERE btrim(n)<>'' ORDER BY 1);
+      UPDATE public.catalog_shares SET catalog_categories=assigned WHERE id=share.id;
+    END IF;
+  END IF;
+  RETURN jsonb_build_object('kind',kind,'categories',assigned);
+END;
+$$;
+REVOKE ALL ON FUNCTION public.configure_catalog_publication(uuid,text,text,text[],boolean,boolean),
+  public.manage_customer_catalog(uuid,text,text,text[]),public.catalog_storefront_sections(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.configure_catalog_publication(uuid,text,text,text[],boolean,boolean),
+  public.manage_customer_catalog(uuid,text,text,text[]),public.catalog_storefront_sections(uuid) TO anon,authenticated;
+
+CREATE FUNCTION public.save_catalog_storefront(actor_id uuid,actor_password text,p_sections jsonb)
+RETURNS void LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
+DECLARE
+  kind text;
+  rule jsonb;
+BEGIN
+  FOREACH kind IN ARRAY ARRAY['normal','wholesale','warehouse'] LOOP
+    rule := p_sections->kind;
+    IF rule IS NULL OR jsonb_typeof(rule) NOT IN ('array','null') THEN RAISE EXCEPTION 'Configuración incompleta'; END IF;
+    PERFORM public.configure_catalog_publication(actor_id,actor_password,kind,
+      ARRAY(SELECT jsonb_array_elements_text(nullif(rule,'null'::jsonb))), true,rule <> 'null'::jsonb);
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.save_catalog_storefront(uuid,text,jsonb) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.save_catalog_storefront(uuid,text,jsonb) TO anon,authenticated;
+
+-- ====================================================
+-- Source: 084-catalog-customer-email-registration.sql
+-- ====================================================
+
+ALTER TABLE public.catalog_customer_accounts
+  ADD COLUMN IF NOT EXISTS email TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS catalog_customer_accounts_owner_email_key
+  ON public.catalog_customer_accounts(owner_admin_id, lower(email))
+  WHERE email IS NOT NULL;
+
+CREATE OR REPLACE FUNCTION public.submit_catalog_order_for_customer(
+  p_token TEXT,
+  p_customer_id UUID,
+  p_items JSONB
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+  share_row public.catalog_shares%ROWTYPE;
+  customer_row public.catalog_customer_accounts%ROWTYPE;
+  created_sale_id UUID;
+BEGIN
+  SELECT * INTO share_row
+  FROM public.catalog_shares
+  WHERE token = p_token
+    AND active = TRUE
+    AND (expires_at IS NULL OR expires_at > NOW())
+  LIMIT 1;
+
+  IF share_row.id IS NULL THEN
+    RAISE EXCEPTION 'El enlace del catálogo no está activo';
+  END IF;
+
+  SELECT * INTO customer_row
+  FROM public.catalog_customer_accounts
+  WHERE id = p_customer_id
+    AND owner_admin_id = share_row.owner_admin_id
+    AND is_active = TRUE
+  LIMIT 1;
+
+  IF customer_row.id IS NULL THEN
+    RAISE EXCEPTION 'La cuenta del cliente no está activa para este catálogo';
+  END IF;
+
+  created_sale_id := public.submit_catalog_order(
+    p_token,
+    customer_row.name,
+    customer_row.phone,
+    p_items
+  );
+
+  UPDATE public.catalog_order_history AS history
+  SET catalog_customer_id = customer_row.id
+  WHERE history.sale_id = created_sale_id
+    AND history.owner_admin_id = customer_row.owner_admin_id;
+
+  RETURN created_sale_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.submit_catalog_order_for_customer(TEXT, UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.submit_catalog_order_for_customer(TEXT, UUID, JSONB) TO service_role;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (83):
+-- Archivos concatenados (87):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -5239,3 +5653,4 @@ $$;
 --   - 080-shared-catalog-categories.sql
 --   - 081-editable-catalog-links.sql
 --   - 082-catalog-storefront-publication.sql
+--   - 084-catalog-customer-email-registration.sql

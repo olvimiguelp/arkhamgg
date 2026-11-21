@@ -44,6 +44,12 @@ type CatalogCustomer = {
   phone: string
 }
 
+type CatalogStorefrontSection = {
+  kind: "normal" | "wholesale" | "warehouse"
+  token: string
+  categories: string[] | null
+}
+
 type CatalogCustomerSession = {
   sessionToken: string
   customer: CatalogCustomer
@@ -113,8 +119,10 @@ async function getCatalogPage(supabase: any, request: CatalogPageRequest, signal
 }
 
 function CatalogoPublico() {
-  const token = new URLSearchParams(window.location.search).get("token") || ""
+  const requestedToken = new URLSearchParams(window.location.search).get("token") || ""
+  const [token, setToken] = useState(requestedToken)
   const supabase = useMemo(() => createClient(), [])
+  const [storefrontSections, setStorefrontSections] = useState<CatalogStorefrontSection[]>([])
   const [business, setBusiness] = useState("Catalogo 049")
   const [products, setProducts] = useState<Product[]>([])
   const [cart, setCart] = useState<Line[]>([])
@@ -122,8 +130,13 @@ function CatalogoPublico() {
   const [phone, setPhone] = useState("")
   const [customerSession, setCustomerSession] = useState<CatalogCustomerSession | null>(null)
   const [loginOpen, setLoginOpen] = useState(false)
-  const [loginPhone, setLoginPhone] = useState("")
+  const [loginIdentifier, setLoginIdentifier] = useState("")
   const [loginPassword, setLoginPassword] = useState("")
+  const [registrationName, setRegistrationName] = useState("")
+  const [registrationEmail, setRegistrationEmail] = useState("")
+  const [registrationPhone, setRegistrationPhone] = useState("")
+  const [registrationPassword, setRegistrationPassword] = useState("")
+  const [authMode, setAuthMode] = useState<"login" | "register">("register")
   const [authLoading, setAuthLoading] = useState(false)
   const [authMessage, setAuthMessage] = useState("")
   const [sourceTable, setSourceTable] = useState<CatalogSnapshot["source_table"]>()
@@ -144,6 +157,8 @@ function CatalogoPublico() {
   const [hasMore, setHasMore] = useState(false)
   const lastLoadedQueryRef = useRef("")
   const activeQueryRef = useRef("")
+  const storefrontOwnerId = import.meta.env.VITE_STOREFRONT_OWNER_ID || "5992b49e-1b7c-4f2f-b3d1-894ce02c368a"
+  const customerSessionStorageKey = `${CUSTOMER_SESSION_PREFIX}${storefrontOwnerId}`
 
   useEffect(() => {
     if (!done) return
@@ -153,6 +168,33 @@ function CatalogoPublico() {
   }, [done])
 
   useEffect(() => {
+    if (requestedToken || token) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc("catalog_storefront_sections", {
+          p_owner: storefrontOwnerId,
+        })
+        if (error) throw error
+        const sections = (Array.isArray(data) ? data : []) as CatalogStorefrontSection[]
+        if (!sections.length) throw new Error("El catálogo todavía no está publicado.")
+        if (cancelled) return
+        setStorefrontSections(sections)
+        const defaultSection = sections.find((section) => section.kind === "normal") || sections[0]
+        setToken(defaultSection.token)
+      } catch (error) {
+        if (cancelled) return
+        setMessage(errorMessage(error, "No se pudo encontrar el catálogo publicado."))
+        setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [requestedToken, storefrontOwnerId, supabase, token])
+
+  useEffect(() => {
+    if (!token) return
     const controller = new AbortController()
     const defaultQuery = makeCatalogQueryKey(token, "", "")
     activeQueryRef.current = defaultQuery
@@ -166,7 +208,7 @@ function CatalogoPublico() {
     setPhone("")
     setCustomerSession(null)
     setLoginOpen(false)
-    setLoginPhone("")
+    setLoginIdentifier("")
     setLoginPassword("")
     setAuthMessage("")
     setCategories([])
@@ -177,12 +219,6 @@ function CatalogoPublico() {
     setMessage("")
     setDone(false)
     setSelectedProduct(null)
-
-    if (!token) {
-      setMessage("Este enlace no es válido o está desactivado.")
-      setLoading(false)
-      return () => controller.abort()
-    }
 
     void (async () => {
       try {
@@ -216,12 +252,13 @@ function CatalogoPublico() {
   }, [supabase, token])
 
   useEffect(() => {
-    if (!token || sourceTable !== "armacen") return
+    if (!token) return
 
-    const storageKey = `${CUSTOMER_SESSION_PREFIX}${token}`
+    const storageKey = customerSessionStorageKey
     let sessionToken = ""
     try {
-      const storedSession = window.localStorage.getItem(storageKey)
+      const storedSession = window.localStorage.getItem(storageKey) ||
+        window.localStorage.getItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
       const parsed: unknown = storedSession ? JSON.parse(storedSession) : null
       if (parsed && typeof parsed === "object" && "session_token" in parsed &&
         typeof parsed.session_token === "string") {
@@ -262,6 +299,7 @@ function CatalogoPublico() {
         if (cancelled) return
         try {
           window.localStorage.removeItem(storageKey)
+          window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
         } catch (storageError) {
           console.error("No se pudo borrar la sesión vencida del catálogo:", storageError)
         }
@@ -275,7 +313,7 @@ function CatalogoPublico() {
     return () => {
       cancelled = true
     }
-  }, [sourceTable, supabase, token])
+  }, [customerSessionStorageKey, supabase, token])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(searchTerm.trim()), SEARCH_DEBOUNCE_MS)
@@ -370,11 +408,13 @@ function CatalogoPublico() {
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const total = cart.reduce((sum, item) => sum + Number(item.sell_price) * item.quantity, 0)
   const hasActiveFilters = Boolean(searchTerm.trim()) || selectedCategory !== "all"
-  const canUseCustomerAccounts = sourceTable === "armacen"
+  const canUseCustomerAccounts = Boolean(token)
 
   const login = async () => {
-    if (!/^\d{10}$/.test(loginPhone)) {
-      setAuthMessage("El teléfono debe tener exactamente 10 dígitos.")
+    const identifier = loginIdentifier.trim()
+    const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identifier)
+    if (!isEmail && !/^\d{10}$/.test(identifier)) {
+      setAuthMessage("Escribe un correo válido o un teléfono de 10 dígitos.")
       return
     }
     if (!loginPassword) {
@@ -388,7 +428,7 @@ function CatalogoPublico() {
       const response = await invokeCatalogCustomerAccess(supabase, {
         action: "login",
         token,
-        phone: loginPhone,
+        ...(isEmail ? { email: identifier } : { phone: identifier }),
         password: loginPassword,
       })
       const customer = response.customer
@@ -411,7 +451,7 @@ function CatalogoPublico() {
       setLoginOpen(false)
       try {
         window.localStorage.setItem(
-          `${CUSTOMER_SESSION_PREFIX}${token}`,
+          customerSessionStorageKey,
           JSON.stringify({ session_token: session.sessionToken }),
         )
       } catch (error) {
@@ -420,6 +460,68 @@ function CatalogoPublico() {
       }
     } catch (error) {
       setAuthMessage(errorMessage(error, "No se pudo iniciar sesión. Inténtalo nuevamente."))
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  const register = async () => {
+    if (!registrationName.trim()) {
+      setAuthMessage("Escribe tu nombre.")
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(registrationEmail.trim())) {
+      setAuthMessage("Escribe un correo válido.")
+      return
+    }
+    if (!/^\d{10}$/.test(registrationPhone)) {
+      setAuthMessage("El teléfono debe tener exactamente 10 dígitos.")
+      return
+    }
+    if (registrationPassword.length < 8) {
+      setAuthMessage("La contraseña debe tener al menos 8 caracteres.")
+      return
+    }
+
+    setAuthLoading(true)
+    setAuthMessage("")
+    try {
+      const response = await invokeCatalogCustomerAccess(supabase, {
+        action: "register",
+        token,
+        name: registrationName.trim(),
+        email: registrationEmail.trim().toLowerCase(),
+        phone: registrationPhone,
+        password: registrationPassword,
+      })
+      const customer = response.customer
+      if (typeof response.session_token !== "string" ||
+        !customer || typeof customer !== "object" ||
+        !("id" in customer) || typeof customer.id !== "string" ||
+        !("name" in customer) || typeof customer.name !== "string" ||
+        !("phone" in customer) || typeof customer.phone !== "string") {
+        throw new Error("La función devolvió una respuesta de registro inválida")
+      }
+
+      const session = {
+        sessionToken: response.session_token,
+        customer: { id: customer.id, name: customer.name, phone: customer.phone },
+      }
+      setCustomerSession(session)
+      setName(session.customer.name)
+      setPhone(session.customer.phone)
+      setRegistrationPassword("")
+      try {
+        window.localStorage.setItem(
+          customerSessionStorageKey,
+          JSON.stringify({ session_token: session.sessionToken }),
+        )
+      } catch (error) {
+        console.error("No se pudo guardar la sesión del catálogo:", error)
+        setAuthMessage("Cuenta creada, pero el navegador no pudo guardar la sesión. Inicia sesión nuevamente.")
+      }
+    } catch (error) {
+      setAuthMessage(errorMessage(error, "No se pudo crear la cuenta. Inténtalo nuevamente."))
     } finally {
       setAuthLoading(false)
     }
@@ -438,6 +540,7 @@ function CatalogoPublico() {
       setAuthMessage(errorMessage(error, "No se pudo cerrar la sesión en el servidor."))
     } finally {
       try {
+        window.localStorage.removeItem(customerSessionStorageKey)
         window.localStorage.removeItem(`${CUSTOMER_SESSION_PREFIX}${token}`)
       } catch (error) {
         console.error("No se pudo borrar la sesión del catálogo:", error)
@@ -499,12 +602,69 @@ function CatalogoPublico() {
     return <div className="state-screen"><div className="state-card"><button type="button" className="state-card-close" onClick={() => setDone(false)} aria-label="Cerrar confirmación del pedido">×</button><span className="state-icon success">✓</span><h1>¡Pedido enviado!</h1><p>Recibimos tu selección. El administrador continuará con la facturación.</p></div></div>
   }
 
+  if (catalogReady && !customerSession) {
+    return (
+      <div className="state-screen">
+        <div className="state-card">
+          <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
+          <h1>{authMode === "register" ? "Crear cuenta" : "Iniciar sesión"}</h1>
+          <p>Regístrate o inicia sesión para ver los productos del catálogo.</p>
+          <div className="checkout-form">
+            {authMode === "register" ? (
+              <>
+                <input autoComplete="name" placeholder="Nombre completo" value={registrationName}
+                  onChange={(event) => setRegistrationName(event.target.value)} />
+                <input type="email" autoComplete="email" placeholder="Correo electrónico" value={registrationEmail}
+                  onChange={(event) => setRegistrationEmail(event.target.value)} />
+                <input type="tel" inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="Teléfono (10 dígitos)"
+                  value={registrationPhone}
+                  onChange={(event) => setRegistrationPhone(event.target.value.replace(/\D/g, "").slice(0, 10))} />
+                <input type="password" autoComplete="new-password" minLength={8} placeholder="Contraseña (mínimo 8 caracteres)"
+                  value={registrationPassword} onChange={(event) => setRegistrationPassword(event.target.value)} />
+                <button className="submit-button" disabled={authLoading} onClick={() => void register()}>
+                  {authLoading ? "Creando cuenta…" : "Crear cuenta y ver catálogo"}
+                </button>
+                <button type="button" className="text-button" onClick={() => { setAuthMode("login"); setAuthMessage("") }}>
+                  Ya tengo una cuenta
+                </button>
+              </>
+            ) : (
+              <>
+                <input autoComplete="username" placeholder="Correo electrónico o teléfono" value={loginIdentifier}
+                  onChange={(event) => setLoginIdentifier(event.target.value)} />
+                <input type="password" autoComplete="current-password" placeholder="Contraseña"
+                  value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} />
+                <button className="submit-button" disabled={authLoading} onClick={() => void login()}>
+                  {authLoading ? "Iniciando sesión…" : "Iniciar sesión"}
+                </button>
+                <button type="button" className="text-button" onClick={() => { setAuthMode("register"); setAuthMessage("") }}>
+                  Crear una cuenta nueva
+                </button>
+              </>
+            )}
+            {authMessage && <p className="error-message" role="alert">{authMessage}</p>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="catalog-shell">
       <header className="site-header">
         <div className="header-inner">
           <img className="brand-logo" src={catalogLogo} alt="Logo de 049 Móvil" />
           <div className="brand-copy"><span>CATALOGO 049</span><strong>{business}</strong></div>
+          {storefrontSections.length > 1 && (
+            <div className="account-actions">
+              {storefrontSections.map((section) => (
+                <button key={section.kind} type="button" className="account-button"
+                  aria-pressed={section.token === token} onClick={() => setToken(section.token)}>
+                  {section.kind === "warehouse" ? "Almacén" : section.kind === "wholesale" ? "Por mayor" : "Productos"}
+                </button>
+              ))}
+            </div>
+          )}
           {canUseCustomerAccounts && (customerSession ? (
             <div className="account-actions">
               <span>Hola, {customerSession.customer.name}</span>
@@ -568,12 +728,10 @@ function CatalogoPublico() {
           ) : loginOpen && canUseCustomerAccounts ? (
             <>
               <input
-                type="tel"
-                inputMode="numeric"
-                maxLength={10}
-                placeholder="Teléfono de 10 dígitos"
-                value={loginPhone}
-                onChange={(event) => setLoginPhone(event.target.value.replace(/\D/g, "").slice(0, 10))}
+                autoComplete="username"
+                placeholder="Correo electrónico o teléfono"
+                value={loginIdentifier}
+                onChange={(event) => setLoginIdentifier(event.target.value)}
               />
               <input
                 type="password"
@@ -582,7 +740,7 @@ function CatalogoPublico() {
                 value={loginPassword}
                 onChange={(event) => setLoginPassword(event.target.value)}
               />
-              <button className="submit-button" disabled={authLoading || !/^\d{10}$/.test(loginPhone) || !loginPassword} onClick={() => void login()}>
+              <button className="submit-button" disabled={authLoading || !loginIdentifier.trim() || !loginPassword} onClick={() => void login()}>
                 {authLoading ? "Iniciando sesión…" : "Iniciar sesión"}
               </button>
               <button type="button" className="text-button" onClick={() => { setLoginOpen(false); setAuthMessage("") }}>

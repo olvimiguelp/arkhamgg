@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
-import { getPublicCatalogUrl } from "@/lib/public-catalog-url"
+import { PUBLIC_CATALOG_URL } from "@/lib/public-catalog-url"
 
 const kinds = ["normal", "wholesale", "warehouse"] as const
 type Kind = (typeof kinds)[number]
@@ -34,16 +34,16 @@ function CategoryChoices({
   change: (v: string[]) => void
 }) {
   const names = new Map(options.map((o) => [o.value, o.label]))
-  for (const name of selected) if (!names.has(name)) names.set(name, name)
+  const availableSelected = selected.filter((name) => names.has(name))
   return (
     <div className="grid gap-2 py-2">
       {Array.from(names, ([value, label]) => (
         <label className="flex items-center gap-2" key={value}>
           <input
             type="checkbox"
-            checked={selected.includes(value)}
+            checked={availableSelected.includes(value)}
             onChange={(e) =>
-              change(e.target.checked ? [...selected, value] : selected.filter((n) => n !== value))
+              change(e.target.checked ? [...availableSelected, value] : availableSelected.filter((n) => n !== value))
             }
           />
           {label}
@@ -101,21 +101,25 @@ export function CatalogPublication({ isAdmin, ownerId, credentials, warehouse, p
         const rules = Object.fromEntries(
           kinds.map((k) => [
             k,
-            scopes[k].mode === "hidden" ? null : scopes[k].mode === "all" ? [] : scopes[k].categories,
+            scopes[k].mode === "hidden"
+              ? null
+              : scopes[k].mode === "all"
+                ? []
+                : scopes[k].categories.filter((category) => options(k).some((option) => option.value === category)),
           ]),
         )
         const { error } = await db.rpc("save_catalog_storefront", { ...actor, p_sections: rules })
         if (error) throw new Error(error.message)
         setMessage("Portada guardada.")
       } else if (tab === "customer") {
-        const { data, error } = await db.rpc("configure_catalog_publication", {
+        const { error } = await db.rpc("configure_catalog_publication", {
           ...actor,
           p_kind: kind,
           p_categories: all ? [] : selected,
-          p_home: false,
+          p_home: true,
         })
         if (error) throw new Error(error.message)
-        setUrl(getPublicCatalogUrl(data))
+        setUrl(PUBLIC_CATALOG_URL)
       } else {
         const token = new URL(url.trim()).searchParams.get("token")
         if (!token) throw new Error("Pega el enlace completo del cliente.")
