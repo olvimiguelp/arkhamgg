@@ -409,11 +409,15 @@ export default function SalesPage() {
     [products],
   )
 
-  const getMinimumSellPrice = (item: { minimumSellPrice?: number; buyPrice?: number }) => {
-    const marked = Number(item.minimumSellPrice)
+  const getMinimumSellPrice = (item: Partial<Product | CartItem>) => {
+    const sourceId = item.sourceId || parseSourceRuntimeId(item.id)?.sourceId
+    const currentProduct = products.find(
+      (product) => product.id === item.id || (sourceId && product.sourceId === sourceId),
+    )
+    const marked = currentProduct ? Number(currentProduct.minimumSellPrice) : Number(item.minimumSellPrice)
     if (Number.isFinite(marked) && marked > 0) return marked
 
-    const fallbackBuyPrice = Number(item.buyPrice)
+    const fallbackBuyPrice = Number(item.buyPrice ?? currentProduct?.buyPrice)
     return Number.isFinite(fallbackBuyPrice) ? Math.max(0, fallbackBuyPrice) : 0
   }
 
@@ -1052,7 +1056,32 @@ export default function SalesPage() {
         paymentKind: "debt_payment",
         note: paymentNoteAbono || "Pago registrado desde caja",
         customerType: selectedType === "almacen" ? "almacen" : "general",
+        allocations: paymentAllocationsPreview.map((allocation) => ({
+          saleId: allocation.saleId,
+          invoiceNumber: allocation.invoiceNumber,
+          appliedAmount: allocation.appliedAmount,
+          pendingBefore: allocation.pendingAmount,
+          pendingAfter: allocation.remainingAmount,
+        })),
       })
+
+      for (const allocation of paymentAllocationsPreview) {
+        const sale = allCustomerSales.find((item) => item.id === allocation.saleId)
+        if (!sale) continue
+
+        const nextAmountPaid = Math.min(
+          Number(sale.total) || 0,
+          (Number(sale.amountPaid) || 0) + allocation.appliedAmount,
+        )
+        const nextPending = Math.max(0, (Number(sale.total) || 0) - nextAmountPaid)
+        const nextStatus: Sale["status"] = nextPending <= 0 ? "completada" : "credito"
+
+        await updateSale(sale.id, {
+          amountPaid: nextAmountPaid,
+          status: nextStatus,
+          creditResolved: nextPending <= 0,
+        })
+      }
 
       // Update almacen customer debt if applicable
       if (selectedType === "almacen") {
@@ -1120,6 +1149,22 @@ export default function SalesPage() {
     }
   }
 
+  const isAlmacenInventoryProduct = useCallback((item: Partial<Product | CartItem>) => {
+    const runtimeSource = parseSourceRuntimeId(item.id)
+    if (runtimeSource?.sourceTable) return runtimeSource.sourceTable === "armacen"
+
+    const explicitSource = normalizeInventorySourceTable(item.sourceTable)
+    if (explicitSource) return explicitSource === "armacen"
+
+    const hasBoxNumber = Boolean(normalizeAlmacenBoxNumber(item.boxNumber))
+    if (hasBoxNumber) return true
+
+    // Fallback solo para datos legacy sin metadata de origen.
+    const hasLegacySourceMetadata = Boolean(item.id || item.sourceId || item.sourceTable)
+    const hasKnownAlmacenCategory = isAlmacenCategory(item.category)
+    return !hasLegacySourceMetadata && hasKnownAlmacenCategory
+  }, [])
+
   const addToCart = async (product: Product) => {
     if (product.stock === 0) {
       toast({
@@ -1127,7 +1172,17 @@ export default function SalesPage() {
         description: "Este producto no tiene inventario disponible",
         variant: "destructive",
       })
-      return
+      return false
+    }
+
+    const isAlmacenProduct = isAlmacenInventoryProduct(product)
+    if (cart.some((item) => isAlmacenInventoryProduct(item) !== isAlmacenProduct)) {
+      toast({
+        title: "Compra mixta no permitida",
+        description: "No se pueden combinar productos del almacén con productos del inventario general en una misma compra.",
+        variant: "destructive",
+      })
+      return false
     }
 
     const existingItem = cart.find((item) => item.id === product.id)
@@ -1145,7 +1200,7 @@ export default function SalesPage() {
           description: `Solo hay ${product.stock} unidades disponibles`,
           variant: "destructive",
         })
-        return
+        return false
       }
       updateCartItemQuantity(existingItem.cartId, existingItem.quantity + 1)
     } else {
@@ -1165,6 +1220,7 @@ export default function SalesPage() {
         })
       }
     }
+    return true
   }
 
   const handleSalesWheel = useCallback((event: React.WheelEvent<HTMLElement>) => {
@@ -1207,12 +1263,13 @@ export default function SalesPage() {
       )
 
       if (match) {
-        await addToCart(match.product)
-        setSearchTerm("")
-        toast({
-          title: "Producto agregado",
-          description: `${match.product.name} fue agregado al carrito.`,
-        })
+        if (await addToCart(match.product)) {
+          setSearchTerm("")
+          toast({
+            title: "Producto agregado",
+            description: `${match.product.name} fue agregado al carrito.`,
+          })
+        }
       } else {
         toast({
           title: "No encontrado",
@@ -1274,22 +1331,6 @@ export default function SalesPage() {
 
   const discountAmount = Math.max(0, Math.min(discount, subtotal))
   const total = Math.max(0, subtotal - discountAmount)
-
-  const isAlmacenInventoryProduct = useCallback((item: Partial<Product | CartItem>) => {
-    const runtimeSource = parseSourceRuntimeId(item.id)
-    if (runtimeSource?.sourceTable) return runtimeSource.sourceTable === "armacen"
-
-    const explicitSource = normalizeInventorySourceTable(item.sourceTable)
-    if (explicitSource) return explicitSource === "armacen"
-
-    const hasBoxNumber = Boolean(normalizeAlmacenBoxNumber(item.boxNumber))
-    if (hasBoxNumber) return true
-
-    // Fallback solo para datos legacy sin metadata de origen.
-    const hasLegacySourceMetadata = Boolean(item.id || item.sourceId || item.sourceTable)
-    const hasKnownAlmacenCategory = isAlmacenCategory(item.category)
-    return !hasLegacySourceMetadata && hasKnownAlmacenCategory
-  }, [])
 
   const visibleProducts = useMemo(() => {
     if (showAlmacenProductsOnly) {
@@ -1581,6 +1622,16 @@ export default function SalesPage() {
   const hasAlmacenItemsInCart = useMemo(() => cart.some((item) => isAlmacenSaleItem(item)), [cart, isAlmacenSaleItem])
   const hasNonAlmacenItemsInCart = useMemo(() => cart.some((item) => !isAlmacenSaleItem(item)), [cart, isAlmacenSaleItem])
   const hasMixedCart = hasAlmacenItemsInCart && hasNonAlmacenItemsInCart
+  const ensureSingleInventoryTypeInCart = useCallback(() => {
+    if (!hasMixedCart) return true
+
+    toast({
+      title: "Compra mixta no permitida",
+      description: "Retira del carrito los productos del almacén o los del inventario general para continuar.",
+      variant: "destructive",
+    })
+    return false
+  }, [hasMixedCart, toast])
   const selectedMixedAlmacenCustomer = useMemo(() => {
     if (!hasMixedCart) return null
     return almacenCustomersForCredit.find((customer) => customer.id === selectedAlmacenCustomerForCredit) || null
@@ -1782,9 +1833,10 @@ export default function SalesPage() {
 
   const openSaleTypeDialog = useCallback(() => {
     if (cart.length === 0) return
+    if (!ensureSingleInventoryTypeInCart()) return
     if (!requireMinPrices(cart, "continuar con la venta")) return
     setShowSaleTypeDialog(true)
-  }, [cart, requireMinPrices])
+  }, [cart, ensureSingleInventoryTypeInCart, requireMinPrices])
 
   const handleSelectSaleType = useCallback(
     (type: "normal" | "credit" | "wholesale") => {
@@ -1822,6 +1874,7 @@ export default function SalesPage() {
 
   const handleCreditSale = async () => {
     if (cart.length === 0) return
+    if (!ensureSingleInventoryTypeInCart()) return
     if (!requireMinPrices(cart, "agregar la venta a credito")) return
 
     // Caso 1: Crédito del Cliente del Almacén
@@ -2028,6 +2081,7 @@ export default function SalesPage() {
 
   const handlePartialCreditConfirm = async () => {
     if (cart.length === 0) return
+    if (!ensureSingleInventoryTypeInCart()) return
     if (!requireMinPrices(cart, "confirmar la venta con credito")) return
 
     const paid = Math.max(0, Number(partialCashPaid) || 0)
@@ -2194,6 +2248,7 @@ export default function SalesPage() {
 
   const handleCheckout = async () => {
     if (cart.length === 0) return
+    if (!ensureSingleInventoryTypeInCart()) return
     if (!requireMinPrices(cart, "completar la venta")) return
 
     const parsedPaid = Number.parseFloat(amountPaid)
@@ -2324,6 +2379,7 @@ export default function SalesPage() {
       })
       return
     }
+    if (!ensureSingleInventoryTypeInCart()) return
 
     const existingEditingSale = sales.find((sale) => sale.id === editingQueuedSale?.id)
     const editingSale = editingQueuedSale || existingEditingSale
@@ -2331,10 +2387,11 @@ export default function SalesPage() {
     setQueueLabel(editingSale?.customerName || "")
     setQueueCreditCustomerId(editingSale?.customerId || "")
     setShowQueueDialog(true)
-  }, [cart.length, editingQueuedSale, sales, toast])
+  }, [cart.length, editingQueuedSale, ensureSingleInventoryTypeInCart, sales, toast])
 
   const handleSendToQueue = useCallback(async () => {
     if (cart.length === 0) return
+    if (!ensureSingleInventoryTypeInCart()) return
     if (!requireMinPrices(cart, "enviar a cola exclusiva")) return
 
     const normalizedLabel = queueLabel.trim()
@@ -2434,6 +2491,7 @@ export default function SalesPage() {
     customers,
     currentUser,
     editingQueuedSale,
+    ensureSingleInventoryTypeInCart,
     queueCreditCustomerId,
     queueCustomerType,
     queueLabel,
@@ -2458,6 +2516,18 @@ export default function SalesPage() {
 
   const handleFinalizeQueuedSale = useCallback(async () => {
     if (!selectedQueuedSale) return
+
+    const queuedItems = Array.isArray(selectedQueuedSale.items) ? selectedQueuedSale.items : []
+    const hasAlmacenItems = queuedItems.some((item) => isAlmacenSaleItem(item))
+    const hasNonAlmacenItems = queuedItems.some((item) => !isAlmacenSaleItem(item))
+    if (hasAlmacenItems && hasNonAlmacenItems) {
+      toast({
+        title: "Compra mixta no permitida",
+        description: "Esta pre-factura combina productos del almacén e inventario general y no se puede finalizar.",
+        variant: "destructive",
+      })
+      return
+    }
 
     const saleTotal = Math.max(0, Number(selectedQueuedSale.total) || 0)
     const paidRaw = queuedAmountPaid === "" ? saleTotal : Number.parseFloat(queuedAmountPaid)
@@ -2515,6 +2585,7 @@ export default function SalesPage() {
     queuedCustomerName,
     queuedCustomerPhone,
     queuedPaymentMethod,
+    isAlmacenSaleItem,
     selectedQueuedSale,
     syncRepairStatusForSale,
     toast,
@@ -2618,6 +2689,8 @@ export default function SalesPage() {
                 products={productsToDisplay}
                 onCardClick={addToCart}
                 priceMode={isWholesalePage ? "wholesale" : "sell"}
+                showLocationInsteadOfCategory
+                showCapacity={false}
               />
               {!searchTerm.trim() && hasMoreProducts && (
                 <div className="flex justify-center py-4">
@@ -2894,7 +2967,7 @@ export default function SalesPage() {
               <div className="space-y-2">
                 <Label>Nombre de la Pre-factura (Opcional)</Label>
                 <Input
-                  placeholder="Ej: Maria - cambiar mica"
+                  placeholder="Descripción de la venta"
                   value={queueLabel}
                   onChange={(e) => setQueueLabel(e.target.value)}
                 />
@@ -2970,7 +3043,7 @@ export default function SalesPage() {
             <div className="space-y-2">
               <Label>Nombre del Cliente (Opcional)</Label>
               <Input
-                placeholder="Ej: Juan Pérez"
+                placeholder="Nombre del cliente"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
               />
@@ -2978,7 +3051,7 @@ export default function SalesPage() {
             <div className="space-y-2">
               <Label>Teléfono del Cliente (Opcional)</Label>
               <Input
-                placeholder="Ej: 555-1234"
+                placeholder="Teléfono del cliente"
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
               />
@@ -3058,7 +3131,7 @@ export default function SalesPage() {
               <div className="space-y-2">
                 <Label>Nombre del Cliente (Opcional)</Label>
                 <Input
-                  placeholder="Ej: Juan Perez"
+                  placeholder="Nombre del cliente"
                   value={queuedCustomerName}
                   onChange={(e) => setQueuedCustomerName(e.target.value)}
                 />
@@ -3067,7 +3140,7 @@ export default function SalesPage() {
               <div className="space-y-2">
                 <Label>Telefono del Cliente (Opcional)</Label>
                 <Input
-                  placeholder="Ej: 555-1234"
+                  placeholder="Teléfono del cliente"
                   value={queuedCustomerPhone}
                   onChange={(e) => setQueuedCustomerPhone(e.target.value)}
                 />
@@ -3738,25 +3811,27 @@ export default function SalesPage() {
                 </span>
               </Button>
             )}
-            <Button
-              variant="outline"
-              className="h-auto p-4 justify-start flex-col items-start"
-              onClick={() => {
-                setShowCreditTypeDialog(false)
-                setCreditDialogMode("regular")
-                if (hasAlmacenItemsInCart) {
-                  void loadAlmacenCustomersForCredit()
-                }
-                setShowCreditDialog(true)
-              }}
-            >
-              <span className="font-semibold">Cliente Regular</span>
-              <span className="text-xs text-muted-foreground">
-                {hasAlmacenItemsInCart
-                  ? "Recomendado para ventas mixtas (catalogo + almacen)"
-                  : "Para clientes normales del negocio"}
-              </span>
-            </Button>
+            {(!hasAlmacenItemsInCart || hasNonAlmacenItemsInCart) && (
+              <Button
+                variant="outline"
+                className="h-auto p-4 justify-start flex-col items-start"
+                onClick={() => {
+                  setShowCreditTypeDialog(false)
+                  setCreditDialogMode("regular")
+                  if (hasAlmacenItemsInCart) {
+                    void loadAlmacenCustomersForCredit()
+                  }
+                  setShowCreditDialog(true)
+                }}
+              >
+                <span className="font-semibold">Cliente Regular</span>
+                <span className="text-xs text-muted-foreground">
+                  {hasAlmacenItemsInCart
+                    ? "Recomendado para ventas mixtas (catalogo + almacen)"
+                    : "Para clientes normales del negocio"}
+                </span>
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

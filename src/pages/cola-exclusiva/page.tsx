@@ -1760,7 +1760,7 @@ export default function ColaExclusivaPage() {
               <div className="space-y-2">
                 <Label>Nombre del cliente (opcional)</Label>
                 <Input
-                  placeholder="Ej: Juan Perez"
+                  placeholder="Nombre del cliente"
                   value={queuedCustomerName}
                   onChange={(e) => setQueuedCustomerName(e.target.value)}
                 />
@@ -1769,7 +1769,7 @@ export default function ColaExclusivaPage() {
               <div className="space-y-2">
                 <Label>Telefono del cliente (opcional)</Label>
                 <Input
-                  placeholder="Ej: 8290000000"
+                  placeholder="Teléfono del cliente"
                   value={queuedCustomerPhone}
                   onChange={(e) => setQueuedCustomerPhone(e.target.value)}
                 />

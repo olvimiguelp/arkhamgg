@@ -46,6 +46,10 @@ export interface Product {
   imageUrl?: string
   imageThumbnailUrl?: string
   boxNumber?: string
+  locationType?: "box" | "zone" | null
+  locationValue?: string
+  locationBoxNumber?: string
+  locationZone?: string
   stock: number
   minStock: number
   buyPrice: number
@@ -417,6 +421,14 @@ const mapProductFromDB = (rec: any, sourceTable: InventorySourceTable): Product 
     imageThumbnailUrl: typeof rec.image_thumbnail_url === "string" && rec.image_thumbnail_url ? rec.image_thumbnail_url : undefined,
     category: rec.category != null ? String(rec.category) : "",
     boxNumber: rec.box_number == null ? undefined : String(rec.box_number),
+    locationType: rec.location_type === "box" || rec.location_type === "zone" ? rec.location_type : undefined,
+    locationValue: rec.location_value == null ? undefined : String(rec.location_value),
+    locationBoxNumber: rec.location_box_number == null
+      ? (rec.location_type === "box" ? String(rec.location_value ?? "") : undefined)
+      : String(rec.location_box_number),
+    locationZone: rec.location_zone == null
+      ? (rec.location_type === "zone" ? String(rec.location_value ?? "") : undefined)
+      : String(rec.location_zone),
     stock: Number(rec.stock) || 0,
     minStock: Number(rec.min_stock) || 0,
     buyPrice: Number(rec.buy_price) || 0,
@@ -442,6 +454,7 @@ const sanitizeStoredCartItem = (item: any): CartItem | null => {
   const buyPrice = Number(item.buyPrice)
   const wholesalePrice = Number(item.wholesalePrice)
   const sellPrice = Number(item.sellPrice ?? item.price)
+  const minimumSellPrice = Number(item.minimumSellPrice)
   const customPrice = Number(item.customPrice)
 
   return {
@@ -466,6 +479,7 @@ const sanitizeStoredCartItem = (item: any): CartItem | null => {
     buyPrice: Number.isFinite(buyPrice) ? buyPrice : 0,
     wholesalePrice: Number.isFinite(wholesalePrice) ? wholesalePrice : 0,
     sellPrice: Number.isFinite(sellPrice) ? sellPrice : 0,
+    minimumSellPrice: Number.isFinite(minimumSellPrice) ? Math.max(0, minimumSellPrice) : 0,
     supplier: typeof item.supplier === "string" ? item.supplier : "",
     capacity: item.capacity == null ? undefined : String(item.capacity),
     imei: item.imei == null ? undefined : String(item.imei),
@@ -1074,7 +1088,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const getTenantAdminId = useCallback(() => {
     if (!currentUser) return null
-    const adminId = String(currentUser.adminId || currentUser.ownerAdminId || currentUser.id || "").trim()
+    const tenantOwnerId =
+      currentUser.role === "employee"
+        ? currentUser.ownerAdminId || currentUser.adminId || currentUser.id
+        : currentUser.adminId || currentUser.ownerAdminId || currentUser.id
+    const adminId = String(tenantOwnerId || "").trim()
     return adminId.length > 0 ? adminId : null
   }, [currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id])
 
@@ -1084,10 +1102,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const savedUser = localStorage.getItem('current_user')
       if (savedUser) {
         const parsedUser = JSON.parse(savedUser) as AuthUser
+        const tenantOwnerId =
+          parsedUser.role === "employee"
+            ? parsedUser.ownerAdminId || parsedUser.adminId || parsedUser.id
+            : parsedUser.adminId || parsedUser.ownerAdminId || parsedUser.id
         const normalizedUser = {
           ...parsedUser,
-          adminId: parsedUser.adminId || parsedUser.ownerAdminId || parsedUser.id || "",
-          ownerAdminId: parsedUser.ownerAdminId || parsedUser.adminId || parsedUser.id || "",
+          adminId: tenantOwnerId || "",
+          ownerAdminId: parsedUser.ownerAdminId || tenantOwnerId || parsedUser.id || "",
           permissions: parsedUser.permissions
             ? normalizeEmployeePermissions(parsedUser.permissions)
             : undefined,
@@ -1114,7 +1136,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const withTenantPayload = useCallback(
     <T extends Record<string, any>>(payload: T): T => {
-      const adminId = currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || getTenantAdminId()
+      const adminId = getTenantAdminId()
       if (!adminId) {
         throw new Error("No hay contexto de tenant activo para escribir en base de datos.")
       }
@@ -1123,7 +1145,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
       return { ...payload, owner_admin_id: adminId }
     },
-    [currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id, getTenantAdminId],
+    [getTenantAdminId],
   )
 
   const isRecordVisibleToCurrentTenant = useCallback(
@@ -2560,6 +2582,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
                   supplier: product.supplier || "",
                   capacity: product.capacity || null,
                   imei: product.imei || null,
+                  location_type: product.locationType || null,
+                  location_value: product.locationValue || null,
+                  location_box_number: product.locationBoxNumber || null,
+                  location_zone: product.locationZone || null,
               },
           ),
         )
@@ -2615,6 +2641,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (product.supplier !== undefined) updateData.supplier = product.supplier
       if (product.capacity !== undefined) updateData.capacity = product.capacity
       if (product.imei !== undefined) updateData.imei = product.imei
+      if (targetTable === "products" && product.locationType !== undefined) {
+        updateData.location_type = product.locationType || null
+      }
+      if (targetTable === "products" && product.locationValue !== undefined) {
+        updateData.location_value = product.locationValue || null
+      }
+      if (targetTable === "products" && product.locationBoxNumber !== undefined) {
+        updateData.location_box_number = product.locationBoxNumber || null
+      }
+      if (targetTable === "products" && product.locationZone !== undefined) {
+        updateData.location_zone = product.locationZone || null
+      }
       if (targetTable === "armacen" && product.boxNumber !== undefined) {
         updateData.box_number = product.boxNumber || null
       }
@@ -2754,6 +2792,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const buyPrice = Number(item.buyPrice)
     const wholesalePrice = Number(item.wholesalePrice)
     const sellPrice = Number(item.sellPrice ?? item.customPrice ?? 0)
+    const minimumSellPrice = Number(item.minimumSellPrice)
     const customPrice = Number(item.customPrice)
 
     return {
@@ -2773,6 +2812,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       buyPrice: Number.isFinite(buyPrice) ? buyPrice : 0,
       wholesalePrice: Number.isFinite(wholesalePrice) ? wholesalePrice : 0,
       sellPrice: Number.isFinite(sellPrice) ? sellPrice : 0,
+      minimumSellPrice: Number.isFinite(minimumSellPrice) ? Math.max(0, minimumSellPrice) : 0,
       supplier: typeof item.supplier === "string" ? item.supplier : "",
       capacity: item.capacity == null ? undefined : String(item.capacity),
       imei: item.imei == null ? undefined : String(item.imei),
@@ -3513,6 +3553,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       createdAt: saleData.createdAt ?? new Date().toISOString(),
       createdByEmployeeId: saleData.createdByEmployeeId || currentUser?.id || undefined,
     }
+    const shouldUpdateStock = newSale.status !== "pending"
 
     // 1. Optimistic update
     setSales((prev) => {
@@ -3520,11 +3561,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       return [newSale, ...prev]
     })
 
-    // Update stock optimistically
-    try {
-      updateLocalStockForItems(newSale.items, -1)
-    } catch (err) {
-      console.error("Error updating stock optimistically:", err)
+    if (shouldUpdateStock) {
+      try {
+        updateLocalStockForItems(newSale.items, -1)
+      } catch (err) {
+        console.error("Error updating stock optimistically:", err)
+      }
     }
 
     // Guardar en Supabase
@@ -3537,15 +3579,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       console.error("Error adding sale:", error)
       // Rollback optimistic update
       setSales((prev) => prev.filter((s) => s.id !== newSale.id))
-      updateLocalStockForItems(newSale.items, 1)
+      if (shouldUpdateStock) updateLocalStockForItems(newSale.items, 1)
       return { success: false, error }
     }
 
-    // Update stock in DB
-    try {
-      await updateDbStockForItems(supabase, newSale.items, -1)
-    } catch (err) {
-      console.error("Error updating stocks in DB after sale:", err)
+    if (shouldUpdateStock) {
+      try {
+        await updateDbStockForItems(supabase, newSale.items, -1)
+      } catch (err) {
+        console.error("Error updating stocks in DB after sale:", err)
+      }
     }
 
     await syncAlmacenCreditLedger(newSale, supabase)
@@ -3561,6 +3604,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
     const previousSales = [...sales]
     const currentSale = sales.find((sale) => sale.id === id)
+    const isFinalizingQueuedSale =
+      currentSale?.status === "pending" && (saleUpdate.status === "completada" || saleUpdate.status === "credito")
+    const isAlmacenCreditSale = Boolean(
+      currentSale?.almacenCustomerAccountId ||
+      currentSale?.items.some((item) => isAlmacenSourceRecord(item as Record<string, unknown>)),
+    )
 
     // Optimistic update
     setSales((prev) => prev.map((s) => (s.id === id ? { ...s, ...saleUpdate } : s)))
@@ -3627,7 +3676,34 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         throw error
       }
 
-      if (mergedSaleForSync?.status === "credito") {
+      if (isFinalizingQueuedSale && mergedSaleForSync) {
+        updateLocalStockForItems(mergedSaleForSync.items, -1)
+        await updateDbStockForItems(supabase, mergedSaleForSync.items, -1)
+      }
+
+      if (
+        isAlmacenCreditSale &&
+        mergedSaleForSync &&
+        (saleUpdate.amountPaid !== undefined || saleUpdate.status !== undefined)
+      ) {
+        const invoiceNumber = String(mergedSaleForSync.invoiceNumber || "").trim()
+        const ledgerUpdate = withTenantFilter(
+          supabase.from("almacen_credit_sales").update({
+            amount_paid: mergedSaleForSync.amountPaid,
+            status: mergedSaleForSync.status,
+          }),
+        ).or(
+          invoiceNumber
+            ? `sale_id.eq.${id},id.eq.${id},invoice_number.eq.${invoiceNumber}`
+            : `sale_id.eq.${id},id.eq.${id}`,
+        )
+        const { error: ledgerUpdateError } = await ledgerUpdate
+        if (ledgerUpdateError && !isMissingTableError(ledgerUpdateError)) {
+          throw ledgerUpdateError
+        }
+      }
+
+      if (mergedSaleForSync?.status === "credito" && currentSale?.status !== "credito") {
         await syncAlmacenCreditLedger(mergedSaleForSync, supabase)
       }
     } catch (error) {
@@ -3656,17 +3732,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     try {
       const supabase = createClient()
 
-      // 2. Revertir Stock: usar helpers que resuelven sourceTable/sourceId correctamente
-      try {
-        console.debug("[deleteSale] reverting stock for sale id=", saleToDelete.id, "items=", saleToDelete.items)
-        // Actualiza estado local primero
-        updateLocalStockForItems(saleToDelete.items, 1)
-
-        // Luego actualiza la BD
-        await updateDbStockForItems(supabase, saleToDelete.items, 1)
-        console.debug("[deleteSale] stock revert attempted for sale id=", saleToDelete.id)
-      } catch (err) {
-        console.error("Error revirtiendo stock al eliminar venta:", err)
+      if (saleToDelete.status !== "pending") {
+        try {
+          console.debug("[deleteSale] reverting stock for sale id=", saleToDelete.id, "items=", saleToDelete.items)
+          updateLocalStockForItems(saleToDelete.items, 1)
+          await updateDbStockForItems(supabase, saleToDelete.items, 1)
+          console.debug("[deleteSale] stock revert attempted for sale id=", saleToDelete.id)
+        } catch (err) {
+          console.error("Error revirtiendo stock al eliminar venta:", err)
+        }
       }
 
       // 3. Revertir Deuda y Total de Compras del Cliente
@@ -4137,22 +4211,38 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       const remainingDebt = Math.max(0, Number(almacenAccount.debt || 0) - newPayment.amount)
-      const { error: paymentInsertError } = await supabase.from("almacen_payments").insert(
-        withTenantPayload({
-          id: newPayment.id,
-          invoice_number: newPayment.invoiceNumber,
-          customer_account_id: newPayment.customerId,
-          source_customer_id: almacenAccount.source_customer_id ?? null,
-          amount: newPayment.amount,
-          previous_debt: newPayment.previousDebt,
-          remaining_debt: remainingDebt,
-          payment_method: newPayment.paymentMethod,
-          date: newPayment.date,
-          note: newPayment.note,
-          created_by: currentUser?.id ?? null,
-          created_by_name: currentUser?.name ?? null,
-        }),
-      )
+      const paymentPayload = {
+        id: newPayment.id,
+        invoice_number: newPayment.invoiceNumber,
+        customer_account_id: newPayment.customerId,
+        source_customer_id: almacenAccount.source_customer_id ?? null,
+        amount: newPayment.amount,
+        previous_debt: newPayment.previousDebt,
+        remaining_debt: remainingDebt,
+        payment_method: newPayment.paymentMethod,
+        date: newPayment.date,
+        note: newPayment.note,
+        created_by: currentUser?.id ?? null,
+        created_by_name: currentUser?.name ?? null,
+        applied_allocations: allocations.map((allocation) => ({
+          saleId: allocation.saleId,
+          invoiceNumber: allocation.invoiceNumber,
+          pendingAmount: allocation.pendingBefore,
+          appliedAmount: allocation.appliedAmount,
+          remainingAmount: allocation.pendingAfter,
+        })),
+      }
+      let { error: paymentInsertError } = await supabase
+        .from("almacen_payments")
+        .insert(withTenantPayload(paymentPayload))
+
+      if (paymentInsertError && isMissingColumnError(paymentInsertError, "applied_allocations")) {
+        const legacyPayload = { ...paymentPayload }
+        delete legacyPayload.applied_allocations
+        ;({ error: paymentInsertError } = await supabase
+          .from("almacen_payments")
+          .insert(withTenantPayload(legacyPayload)))
+      }
 
       if (paymentInsertError) {
         console.error("Error adding almacen payment:", paymentInsertError)
@@ -4851,6 +4941,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const preferredPurchase = payment.purchaseId
       ? pendingPurchases.find((purchase) => purchase.id === payment.purchaseId)
       : undefined
+    if (payment.purchaseId && !preferredPurchase) {
+      throw new Error("La factura seleccionada ya no está pendiente para este proveedor.")
+    }
     const allocationOrder = preferredPurchase
       ? [preferredPurchase, ...pendingPurchases.filter((purchase) => purchase.id !== preferredPurchase.id)]
       : pendingPurchases
@@ -5033,7 +5126,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const returnTotalAmount = Number(newReturn.total) || 0
     const creditIncrease = returnData.type === "credito" ? returnTotalAmount : 0
     const saleOriginalCreditAmount =
-      sale?.status === "credito" ? Math.max(0, Number(sale.total || 0) - Number(sale.amountPaid || 0)) : 0
+      sale &&
+      (sale.status === "credito" ||
+        sale.paymentMethod === "credit" ||
+        Number(sale.amountPaid || 0) < Number(sale.total || 0))
+        ? Math.max(0, Number(sale.total || 0) - Number(sale.amountPaid || 0))
+        : 0
     const previousReturnedTotal = sale
       ? returns
         .filter((r) => r.invoiceId === sale.id)
@@ -5043,6 +5141,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const canceledCreditAfterThisReturn = Math.min(saleOriginalCreditAmount, previousReturnedTotal + returnTotalAmount)
     const debtReduction = Math.max(0, canceledCreditAfterThisReturn - previousCanceledCredit)
     const hasCustomerAdjustment = !!returnCustomer && (creditIncrease > 0 || debtReduction > 0)
+    const allSaleReturns = sale
+      ? [...returns, newReturn].filter((r) => r.invoiceId === sale.id)
+      : []
+    const saleReturnStatus = sale ? calculateSaleStatusFromReturns(sale, allSaleReturns) : null
     const customerSnapshot =
       hasCustomerAdjustment && returnCustomer
         ? {
@@ -5061,16 +5163,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Optimistically update sale status
-    if (sale) {
-      const totalItemsInSale = sale.items.reduce((sum, item) => sum + item.quantity, 0)
-      const allReturns = [...returns, newReturn].filter((r) => r.invoiceId === sale.id)
-      const totalReturned = allReturns.reduce(
-        (sum, r) => sum + r.items.reduce((itemSum, item) => itemSum + item.quantity, 0),
-        0,
-      )
-      const newStatus = totalReturned >= totalItemsInSale ? "devuelta_completa" : "devuelta_parcial"
+    if (sale && saleReturnStatus) {
       setSales((prev) =>
-        prev.map((s) => (s.id === sale.id ? { ...s, status: newStatus } : s))
+        prev.map((s) => (s.id === sale.id ? { ...s, status: saleReturnStatus } : s))
       )
     }
 
@@ -5144,15 +5239,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Update DB sale status
-    if (sale) {
-      const totalItemsInSale = sale.items.reduce((sum, item) => sum + item.quantity, 0)
-      const allReturns = [...returns, newReturn].filter((r) => r.invoiceId === sale.id)
-      const totalReturned = allReturns.reduce(
-        (sum, r) => sum + r.items.reduce((itemSum, item) => itemSum + item.quantity, 0),
-        0,
-      )
-      const newStatus = totalReturned >= totalItemsInSale ? "devuelta_completa" : "devuelta_parcial"
-      await runWithInternalCrudBypass(() => updateSale(sale.id, { status: newStatus }))
+    if (sale && saleReturnStatus) {
+      await runWithInternalCrudBypass(() => updateSale(sale.id, { status: saleReturnStatus }))
     }
 
     // Update DB customer balances
@@ -5175,55 +5263,116 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Update DB almacén customer account balances if this is an almacén sale
-    if (sale?.almacenCustomerAccountId) {
-      const almacenCustomerAccountId = sale.almacenCustomerAccountId
-      if (debtReduction > 0) {
-        try {
-          // Get current debt from almacen_customer_accounts
-          const { data: accountData, error: fetchError } = await withTenantFilter(
-            supabase.from("almacen_customer_accounts").select("debt"),
-          ).eq("id", almacenCustomerAccountId).single()
+    if (sale) {
+      try {
+        const { data: creditSale, error: creditSaleFetchError } = await withTenantFilter(
+          supabase.from("almacen_credit_sales").select("customer_account_id, customer_name"),
+        )
+          .eq("sale_id", sale.id)
+          .maybeSingle()
 
-          if (fetchError) {
-            if (!isMissingTableError(fetchError)) {
-              console.error("Error fetching almacen_customer_account:", fetchError)
+        if (creditSaleFetchError) {
+          if (!isMissingTableError(creditSaleFetchError)) {
+            console.error("Error buscando la venta de credito del almacen:", creditSaleFetchError)
+          }
+        } else if (creditSale) {
+          const almacenCustomerAccountId =
+            sale.almacenCustomerAccountId || String(creditSale.customer_account_id || "")
+          const customerName = sale.almacenCustomerName || creditSale.customer_name || sale.customerName || undefined
+
+          if (almacenCustomerAccountId) {
+            if (!sale.almacenCustomerAccountId) {
+              const { error: linkError } = await withTenantFilter(
+                supabase.from("sales").update({
+                  almacen_customer_account_id: almacenCustomerAccountId,
+                  almacen_customer_name: customerName || null,
+                }),
+              ).eq("id", sale.id)
+
+              if (!linkError) {
+                setSales((prev) =>
+                  prev.map((item) =>
+                    item.id === sale.id
+                      ? { ...item, almacenCustomerAccountId, almacenCustomerName: customerName }
+                      : item,
+                  ),
+                )
+              } else if (!isMissingColumnError(linkError, "almacen_customer_account_id")) {
+                console.error("Error vinculando la cuenta de almacen a la venta:", linkError)
+              }
             }
-          } else if (accountData) {
-            const currentDebt = Number(accountData.debt || 0)
-            const newDebt = Math.max(0, currentDebt - debtReduction)
 
-            const { error: updateError } = await withTenantFilter(
-              supabase.from("almacen_customer_accounts").update({ debt: newDebt }),
-            ).eq("id", almacenCustomerAccountId)
+            if (debtReduction > 0) {
+              const { data: accountData, error: fetchError } = await withTenantFilter(
+                supabase.from("almacen_customer_accounts").select("debt"),
+              ).eq("id", almacenCustomerAccountId).single()
 
-            if (updateError) {
-              if (!isMissingTableError(updateError)) {
-                console.error("Error updating almacen_customer_account debt:", updateError)
+              if (fetchError) {
+                if (!isMissingTableError(fetchError)) {
+                  console.error("Error buscando la cuenta del cliente de almacen:", fetchError)
+                }
+              } else if (accountData) {
+                const currentDebt = Number(accountData.debt || 0)
+                const newDebt = Math.max(0, currentDebt - debtReduction)
+                const { error: updateError } = await withTenantFilter(
+                  supabase.from("almacen_customer_accounts").update({ debt: newDebt }),
+                ).eq("id", almacenCustomerAccountId)
+
+                if (updateError && !isMissingTableError(updateError)) {
+                  console.error("Error actualizando deuda del cliente de almacen:", updateError)
+                }
               }
             }
           }
-        } catch (err) {
-          console.error("Error updating almacen customer account after return:", err)
-        }
-      }
 
-      // If this is a credit sale (no payment), remove the credit sale record instead of processing as refund
-      const isCreditSaleWithoutPayment = sale && sale.status === "credito" && Number(sale.amountPaid || 0) === 0
-      if (isCreditSaleWithoutPayment) {
-        try {
-          // Remove the credit sale record from almacen_credit_sales
-          const { error: deleteCreditSaleError } = await withTenantFilter(
-            supabase.from("almacen_credit_sales").delete(),
-          ).eq("sale_id", sale.id)
+          if (saleReturnStatus === "devuelta_completa") {
+            const { error: deleteCreditSaleError } = await withTenantFilter(
+              supabase.from("almacen_credit_sales").delete(),
+            ).eq("sale_id", sale.id)
 
-          if (deleteCreditSaleError) {
-            if (!isMissingTableError(deleteCreditSaleError)) {
-              console.error("Error removing almacen_credit_sales record:", deleteCreditSaleError)
+            if (deleteCreditSaleError && !isMissingTableError(deleteCreditSaleError)) {
+              console.error("Error eliminando la venta devuelta del historial de almacen:", deleteCreditSaleError)
+            }
+          } else if (saleReturnStatus === "devuelta_parcial") {
+            const returnedAmount = allSaleReturns.reduce((sum, returned) => sum + (Number(returned.total) || 0), 0)
+            const remainingItems = sale.items
+              .map((saleItem) => {
+                const returnedQuantity = allSaleReturns.reduce(
+                  (sum, returned) =>
+                    sum +
+                    returned.items.reduce((itemSum, returnedItem) => {
+                      const matchesItem =
+                        returnedItem.productId === saleItem.id ||
+                        sameSaleItemSource(
+                          returnedItem as unknown as Record<string, unknown>,
+                          saleItem as unknown as Record<string, unknown>,
+                        )
+                      return itemSum + (matchesItem ? Number(returnedItem.quantity) || 0 : 0)
+                    }, 0),
+                  0,
+                )
+                const quantity = Math.max(0, Number(saleItem.quantity || 0) - returnedQuantity)
+                return quantity > 0 ? { ...saleItem, quantity } : null
+              })
+              .filter((item): item is CartItem => item !== null)
+            const remainingTotal = Math.max(0, Number(sale.total || 0) - returnedAmount)
+            const remainingCredit = Math.max(0, remainingTotal - Number(sale.amountPaid || 0))
+            const { error: updateCreditSaleError } = await withTenantFilter(
+              supabase.from("almacen_credit_sales").update({
+                items: remainingItems,
+                total: remainingTotal,
+                credit_amount: remainingCredit,
+                status: remainingCredit > 0 ? "credito" : "completada",
+              }),
+            ).eq("sale_id", sale.id)
+
+            if (updateCreditSaleError && !isMissingTableError(updateCreditSaleError)) {
+              console.error("Error actualizando la venta devuelta parcialmente del almacen:", updateCreditSaleError)
             }
           }
-        } catch (err) {
-          console.error("Error removing credit sale record after return:", err)
         }
+      } catch (err) {
+        console.error("Error actualizando la cuenta de almacen despues de la devolucion:", err)
       }
     }
 
@@ -5401,36 +5550,43 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
 
       // If this is a credit sale (no payment), restore the credit sale record when canceling return
-      const isCreditSaleWithoutPayment = sale && sale.status === "credito" && Number(sale.amountPaid || 0) === 0
+      const isCreditSaleWithoutPayment =
+        sale &&
+        (sale.status === "credito" || sale.paymentMethod === "credit") &&
+        Number(sale.amountPaid || 0) === 0
       if (isCreditSaleWithoutPayment) {
         try {
-          // Re-insert the credit sale record in almacen_credit_sales
-          const { error: insertCreditSaleError } = await supabase
-            .from("almacen_credit_sales")
-            .insert(
-              withTenantPayload({
-                sale_id: sale.id,
-                invoice_number: sale.invoiceNumber,
-                date: sale.date,
-                customer_account_id: sale.almacenCustomerAccountId,
-                customer_name: sale.almacenCustomerName || sale.customerName || null,
-                items: sale.items,
-                total: sale.total,
-                amount_paid: 0,
-                credit_amount: sale.total,
-                payment_method: sale.paymentMethod,
-                status: "credito",
-                notes: "Restaurado después de cancelar devolución",
-              }),
-            )
+          const restoredCreditSale = withTenantPayload({
+            sale_id: sale.id,
+            invoice_number: sale.invoiceNumber,
+            date: sale.date,
+            customer_account_id: sale.almacenCustomerAccountId,
+            customer_name: sale.almacenCustomerName || sale.customerName || null,
+            items: sale.items,
+            total: sale.total,
+            amount_paid: 0,
+            credit_amount: sale.total,
+            payment_method: sale.paymentMethod,
+            status: "credito",
+            notes: "Restaurado despues de cancelar devolucion",
+          })
+          const { data: existingCreditSale, error: lookupError } = await withTenantFilter(
+            supabase.from("almacen_credit_sales").select("id"),
+          )
+            .eq("sale_id", sale.id)
+            .maybeSingle()
 
-          if (insertCreditSaleError) {
-            if (!isMissingTableError(insertCreditSaleError)) {
-              console.error("Error restoring almacen_credit_sales record:", insertCreditSaleError)
-            }
+          if (lookupError) throw lookupError
+
+          const { error: creditSaleError } = existingCreditSale
+            ? await withTenantFilter(supabase.from("almacen_credit_sales").update(restoredCreditSale)).eq("sale_id", sale.id)
+            : await supabase.from("almacen_credit_sales").insert(restoredCreditSale)
+
+          if (creditSaleError && !isMissingTableError(creditSaleError)) {
+            console.error("Error restaurando la venta de almacen:", creditSaleError)
           }
         } catch (err) {
-          console.error("Error restoring credit sale record while canceling return:", err)
+          console.error("Error restaurando la venta de almacen al anular devolucion:", err)
         }
       }
     } catch (error) {

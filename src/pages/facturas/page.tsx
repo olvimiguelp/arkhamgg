@@ -538,8 +538,12 @@ export default function FacturasPage() {
         description: `Saldo restante con ${paymentSupplier.name}: ${money(Math.max(0, paymentSupplier.debt - paymentAmount))}.`,
       })
       setPaymentOpen(false)
-    } catch {
-      toast({ title: "No se pudo registrar el abono", variant: "destructive" })
+    } catch (error) {
+      toast({
+        title: "No se pudo registrar el abono",
+        description: error instanceof Error ? error.message : "Revisa la conexión y vuelve a intentarlo.",
+        variant: "destructive",
+      })
     } finally {
       setSaving(false)
     }
@@ -860,7 +864,7 @@ export default function FacturasPage() {
                             <div className="flex gap-2">
                               <Input
                                 list="saved-product-types"
-                                placeholder="Ej: Oficina, Limpieza, Repuestos"
+                                placeholder="Tipo de producto"
                                 value={line.category}
                                 onChange={(event) => updateLine(line.id, { category: event.target.value })}
                               />
@@ -879,7 +883,7 @@ export default function FacturasPage() {
                     </div>
                   ) : (
                     <div className="grid gap-4 md:grid-cols-3">
-                      <div className="md:col-span-2"><Label>Concepto / descripción</Label><Input placeholder="Ej: Materiales, transporte, servicio o suministro..." value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div>
+                      <div className="md:col-span-2"><Label>Concepto / descripción</Label><Input placeholder="Concepto o descripción" value={line.name} onChange={(event) => updateLine(line.id, { name: event.target.value })} /></div>
                       <div><Label>Cantidad</Label><Input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })} /></div>
                     </div>
                   )}

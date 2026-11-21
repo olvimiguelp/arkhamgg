@@ -289,6 +289,28 @@ export default function CuentasPorPagarPage() {
     }
   };
 
+  const loadAccountPaymentHistory = async (accountId: string) => {
+    const { data, error } = await createClient()
+      .from("accounts_payable_payments")
+      .select("id, amount, payment_method, note, created_at")
+      .eq("account_payable_id", accountId)
+      .order("created_at", { ascending: false })
+    if (error) throw error
+    setAccountPaymentHistory(
+      (data || []).map((payment) => ({
+        id: String(payment.id),
+        amount: Number(payment.amount) || 0,
+        paymentMethod:
+          payment.payment_method === "card" ||
+          payment.payment_method === "transfer"
+            ? payment.payment_method
+            : "cash",
+        note: payment.note || undefined,
+        createdAt: String(payment.created_at),
+      })),
+    )
+  }
+
   const openAccountPayment = (accountId: string) => {
     const account = accountsPayable.find((item) => item.id === accountId);
     if (!account) return;
@@ -302,26 +324,13 @@ export default function CuentasPorPagarPage() {
     setAccountPaymentNote("");
     setEditingPaymentId(null);
     setAccountPaymentHistory([]);
-    void createClient()
-      .from("accounts_payable_payments")
-      .select("id, amount, payment_method, note, created_at")
-      .eq("account_payable_id", account.id)
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        setAccountPaymentHistory(
-          (data || []).map((payment) => ({
-            id: String(payment.id),
-            amount: Number(payment.amount) || 0,
-            paymentMethod:
-              payment.payment_method === "card" ||
-              payment.payment_method === "transfer"
-                ? payment.payment_method
-                : "cash",
-            note: payment.note || undefined,
-            createdAt: String(payment.created_at),
-          })),
-        );
+    void loadAccountPaymentHistory(account.id).catch((error) => {
+      toast({
+        title: "No se pudo cargar el historial de abonos",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
       });
+    });
   };
 
   const saveAccountPayment = async () => {
@@ -350,8 +359,37 @@ export default function CuentasPorPagarPage() {
       } else {
         await addAccountPayablePayment(selectedAccountPayable.id, accountPaymentAmount, paymentMethod, note || undefined);
       }
-      toast({ title: editingPaymentId ? "Abono corregido" : "Abono registrado" });
-      openAccountPayment(selectedAccountPayable.id);
+      const nextAmountPaid =
+        selectedAccountPayable.amountPaid -
+        (editingPayment?.amount || 0) +
+        accountPaymentAmount;
+      const nextStatus: AccountPayable["status"] =
+        nextAmountPaid >= selectedAccountPayable.totalAmount
+          ? "pagado"
+          : nextAmountPaid > 0
+            ? "parcial"
+            : "pendiente";
+      setSelectedAccountPayable({
+        ...selectedAccountPayable,
+        amountPaid: nextAmountPaid,
+        status: nextStatus,
+      });
+      setAccountPaymentAmount(
+        Math.max(0, selectedAccountPayable.totalAmount - nextAmountPaid),
+      );
+      let historyError: unknown;
+      try {
+        await loadAccountPaymentHistory(selectedAccountPayable.id);
+      } catch (error) {
+        historyError = error;
+      }
+      toast({
+        title: editingPaymentId ? "Abono corregido" : "Abono registrado",
+        description:
+          historyError instanceof Error
+            ? `No se pudo actualizar el historial: ${historyError.message}`
+            : undefined,
+      });
       setEditingPaymentId(null);
     } catch (error) {
       toast({
@@ -378,8 +416,33 @@ export default function CuentasPorPagarPage() {
     if (!selectedAccountPayable || !window.confirm("¿Eliminar este abono? El balance de la cuenta será restaurado.")) return;
     try {
       await deleteAccountPayablePayment(payment.id, selectedAccountPayable.id, payment.amount);
-      toast({ title: "Abono eliminado" });
-      openAccountPayment(selectedAccountPayable.id);
+      const nextAmountPaid = selectedAccountPayable.amountPaid - payment.amount;
+      setSelectedAccountPayable({
+        ...selectedAccountPayable,
+        amountPaid: nextAmountPaid,
+        status:
+          nextAmountPaid >= selectedAccountPayable.totalAmount
+            ? "pagado"
+            : nextAmountPaid > 0
+              ? "parcial"
+              : "pendiente",
+      });
+      setAccountPaymentAmount(
+        Math.max(0, selectedAccountPayable.totalAmount - nextAmountPaid),
+      );
+      let historyError: unknown;
+      try {
+        await loadAccountPaymentHistory(selectedAccountPayable.id);
+      } catch (error) {
+        historyError = error;
+      }
+      toast({
+        title: "Abono eliminado",
+        description:
+          historyError instanceof Error
+            ? `No se pudo actualizar el historial: ${historyError.message}`
+            : undefined,
+      });
     } catch (error) {
       toast({ title: "No se pudo eliminar el abono", description: error instanceof Error ? error.message : undefined, variant: "destructive" });
     }

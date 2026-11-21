@@ -300,7 +300,7 @@ export default function LoginPage() {
                   <Input
                     id="username"
                     type="text"
-                    placeholder="ej: olvin"
+                    placeholder="Usuario"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     className="h-12 border-slate-600 bg-slate-700/50 pl-11 text-white placeholder:text-slate-500 focus:border-amber-500 focus:ring-amber-500/20"

@@ -58,9 +58,14 @@ import { getOrCreatePublicCatalogShare } from "@/lib/public-catalog-share"
 // In a real app, this might be a distinct view or filter of the inventory
 export interface Product {
   id: string
+  sourceTable?: "products" | "armacen"
   sku: string
   name: string
   category: string
+  locationType?: "box" | "zone" | null
+  locationValue?: string
+  locationBoxNumber?: string
+  locationZone?: string
   imageUrl?: string
   imageThumbnailUrl?: string
   stock: number
@@ -119,6 +124,23 @@ const normalizeProductSku = (value: string) => {
   const compact = value.trim().replace(/\s+/g, "")
   if (/^\d+$/.test(compact)) return compact.replace(/^0+(?=\d)/, "")
   return compact.toLocaleLowerCase()
+}
+
+const getNextProductId = (products: Array<Pick<Product, "sku">>) => {
+  const usedIds = new Set(products.map((product) => normalizeProductSku(product.sku)))
+  let sequence = 1
+
+  while (usedIds.has(normalizeProductSku(`PRD${String(sequence).padStart(6, "0")}`))) {
+    sequence += 1
+  }
+
+  return `PRD${String(sequence).padStart(6, "0")}`
+}
+
+const getProductLocationLabel = (product: Pick<Product, "locationType" | "locationValue" | "locationBoxNumber" | "locationZone">) => {
+  const boxNumber = product.locationBoxNumber?.trim() || (product.locationType === "box" ? product.locationValue?.trim() : "")
+  const zone = product.locationZone?.trim() || (product.locationType === "zone" ? product.locationValue?.trim() : "")
+  return [zone && `Zona ${zone}`, boxNumber && `Caja ${boxNumber}`].filter(Boolean).join(" · ") || "-"
 }
 
 export default function ProductsPage() {
@@ -286,6 +308,10 @@ export default function ProductsPage() {
     sku: "",
     name: "",
     category: "",
+    locationType: "",
+    locationValue: "",
+    locationBoxNumber: "",
+    locationZone: "",
     imei: "",
     buyPrice: "",
     wholesalePrice: "",
@@ -307,6 +333,10 @@ export default function ProductsPage() {
       sku: "",
       name: "",
       category: "",
+      locationType: "",
+      locationValue: "",
+      locationBoxNumber: "",
+      locationZone: "",
       imei: "",
       buyPrice: "",
       wholesalePrice: "",
@@ -593,7 +623,8 @@ export default function ProductsPage() {
     .filter(
       (product) =>
         product.name.toLowerCase().includes(normalizedSearchTerm) ||
-        product.sku.toLowerCase().includes(normalizedSearchTerm),
+        product.sku.toLowerCase().includes(normalizedSearchTerm) ||
+        getProductLocationLabel(product).toLowerCase().includes(normalizedSearchTerm),
     )
     .filter((product) => filterCategory === "all" || product.category === filterCategory)
     .filter((product) => filterSupplier === "all" || product.supplier === filterSupplier)
@@ -624,18 +655,23 @@ export default function ProductsPage() {
       return
     }
 
-    const sku = formData.sku.trim()
+    const sku = editingId ? formData.sku.trim() : getNextProductId(products)
     const name = formData.name.trim()
-    const category = formData.category.trim()
-    const buyPrice = Number(formData.buyPrice)
-    const sellPrice = Number(formData.sellPrice)
+    const category = formData.category.trim() || "General"
+    const locationType = formData.locationType === "box" || formData.locationType === "zone" ? formData.locationType : ""
+    const rawBoxNumber = formData.locationBoxNumber.trim()
+    const boxNumber = rawBoxNumber
+    const zone = formData.locationZone.trim()
+    const locationValue = locationType === "box" ? boxNumber : locationType === "zone" ? zone : ""
+    const buyPrice = formData.buyPrice.trim() === "" ? 0 : Number(formData.buyPrice)
+    const sellPrice = formData.sellPrice.trim() === "" ? 0 : Number(formData.sellPrice)
     const wholesalePrice = formData.wholesalePrice.trim() === "" ? 0 : Number(formData.wholesalePrice)
     const minimumSellPrice = formData.minimumSellPrice.trim() === "" ? 0 : Number(formData.minimumSellPrice)
-    const stock = Number(formData.stock)
+    const stock = formData.stock.trim() === "" ? 0 : Number(formData.stock)
     const minStock = formData.minStock.trim() === "" ? 0 : Number(formData.minStock)
 
-    if (!sku || !name || !category || formData.buyPrice.trim() === "" || formData.sellPrice.trim() === "" || formData.stock.trim() === "") {
-      toast({ title: "Faltan datos obligatorios", description: "Completa la ID, el nombre, la categoría, los precios y el inventario. El inventario puede ser 0.", variant: "destructive" })
+    if (!sku || !name) {
+      toast({ title: "Faltan datos obligatorios", description: "Completa el nombre del producto. El ID se genera automáticamente.", variant: "destructive" })
       return
     }
 
@@ -674,6 +710,10 @@ export default function ProductsPage() {
         sku,
         name,
         category,
+        locationType: locationType || null,
+        locationValue,
+        locationBoxNumber: boxNumber,
+        locationZone: zone,
         buyPrice,
         wholesalePrice,
         sellPrice,
@@ -691,9 +731,14 @@ export default function ProductsPage() {
     } else {
       const newProduct: Product = {
         id: Date.now().toString(),
+        sourceTable: "products",
         sku,
         name,
         category,
+        locationType: locationType || undefined,
+        locationValue: locationValue || undefined,
+        locationBoxNumber: boxNumber || undefined,
+        locationZone: zone || undefined,
         buyPrice,
         wholesalePrice,
         sellPrice,
@@ -735,6 +780,10 @@ export default function ProductsPage() {
       sku: product.sku,
       name: product.name,
       category: product.category,
+      locationType: product.locationType || "",
+      locationValue: product.locationValue || "",
+      locationBoxNumber: product.locationBoxNumber || (product.locationType === "box" ? product.locationValue : "") || "",
+      locationZone: product.locationZone || (product.locationType === "zone" ? product.locationValue : "") || "",
       buyPrice: product.buyPrice.toString(),
       wholesalePrice: product.wholesalePrice?.toString() || "0",
       sellPrice: product.sellPrice.toString(),
@@ -1582,6 +1631,9 @@ export default function ProductsPage() {
                       <div className="min-w-0">
                         <p className="font-semibold break-words">{product.name}</p>
                         <p className="text-xs text-muted-foreground">{product.sku}</p>
+                        {(product.locationBoxNumber || product.locationZone || product.locationValue) && (
+                          <p className="text-xs text-muted-foreground">{getProductLocationLabel(product)}</p>
+                        )}
                       </div>
                       <Badge variant="secondary" className="shrink-0">{product.category}</Badge>
                     </div>
@@ -1640,6 +1692,7 @@ export default function ProductsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>ID</TableHead>
+                  <TableHead>Ubicación</TableHead>
                   <TableHead>Descripción del Producto</TableHead>
                   <TableHead>Capacidad</TableHead>
                   <TableHead>Precio Costo</TableHead>
@@ -1656,7 +1709,7 @@ export default function ProductsPage() {
               <TableBody>
                 {productsToDisplay.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={13} className="text-center py-8 text-muted-foreground">
                       No se encontraron productos
                     </TableCell>
                   </TableRow>
@@ -1664,6 +1717,7 @@ export default function ProductsPage() {
                   productsToDisplay.map((product) => (
                     <TableRow key={product.id}>
                       <TableCell className="font-medium">{product.sku}</TableCell>
+                      <TableCell>{getProductLocationLabel(product)}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           {product.imageThumbnailUrl || product.imageUrl ? (
@@ -1812,32 +1866,67 @@ export default function ProductsPage() {
       />
 
       <Dialog open={isDialogOpen} onOpenChange={handleDialogClose}>
-        <DialogContent className="w-[95vw] max-w-[calc(100vw-1rem)] sm:max-w-[520px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[80vw] h-[80vh] max-w-[80vw] max-h-[80vh] sm:max-w-[80vw] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingId ? "Editar Producto" : "Nuevo Producto"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
               <div className="space-y-2">
-                <Label>ID</Label>
+                <Label>{editingId ? "ID" : "ID automático"}</Label>
                 <Input
-                  placeholder="Ingresar ID"
-                  value={formData.sku}
-                  onChange={(e) => handleInputChange("sku", e.target.value)}
+                  value={editingId ? formData.sku : getNextProductId(products)}
+                  readOnly={!editingId}
                 />
               </div>
               <div className="space-y-2">
                 <Label>Nombre</Label>
                 <Input
-                  placeholder="Ej: Producto"
+                  placeholder="Nombre del producto"
                   value={formData.name}
                   onChange={(e) => handleInputChange("name", e.target.value)}
                 />
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:gap-4">
               <div className="space-y-2">
-                <Label>Categoría</Label>
+                <Label>Ubicar producto por</Label>
+                <Select
+                  value={formData.locationType || "none"}
+                  onValueChange={(value) => setFormData((current) => value === "none"
+                    ? { ...current, locationType: "", locationValue: "", locationBoxNumber: "", locationZone: "" }
+                    : { ...current, locationType: value })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin ubicación</SelectItem>
+                    <SelectItem value="box">Número de caja</SelectItem>
+                    <SelectItem value="zone">Zona</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {formData.locationType && (
+                <>
+                  <div className="space-y-2">
+                    <Label>Número de caja</Label>
+                    <Input
+                      value={formData.locationBoxNumber}
+                      onChange={(event) => handleInputChange("locationBoxNumber", event.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Zona</Label>
+                    <Input
+                      value={formData.locationZone}
+                      onChange={(event) => handleInputChange("locationZone", event.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div className="space-y-2">
+                <Label>Categoría (Opcional)</Label>
                 <Input
                   list="product-category-list"
                   placeholder="Ingresa una categoría o elige una existente"
@@ -1850,26 +1939,10 @@ export default function ProductsPage() {
                   ))}
                 </datalist>
               </div>
-              <div className="space-y-2">
-                <Label>Capacidad (Opcional)</Label>
-                <Input
-                  placeholder="Ej: 128, 256"
-                  value={formData.capacity}
-                  onChange={(e) => handleInputChange("capacity", e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>IMEI (Opcional)</Label>
-                <Input
-                  placeholder="Ej: 123456789012345"
-                  value={formData.imei}
-                  onChange={(e) => handleInputChange("imei", e.target.value)}
-                />
-              </div>
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
               <div className="space-y-2">
-                <Label>Precio Compra</Label>
+                <Label>Precio Compra (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0.00"
@@ -1878,7 +1951,7 @@ export default function ProductsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Precio al Por Mayor</Label>
+                <Label>Precio al Por Mayor (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0.00"
@@ -1887,7 +1960,7 @@ export default function ProductsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Precio Venta</Label>
+                <Label>Precio Venta (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0.00"
@@ -1896,7 +1969,7 @@ export default function ProductsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Precio minimo de venta</Label>
+                <Label>Precio minimo de venta (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0.00"
@@ -1905,7 +1978,7 @@ export default function ProductsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Inventario</Label>
+                <Label>Inventario (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0"
@@ -1914,7 +1987,7 @@ export default function ProductsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Inv. Minimo</Label>
+                <Label>Inv. Minimo (Opcional)</Label>
                 <Input
                   type="number"
                   placeholder="0"

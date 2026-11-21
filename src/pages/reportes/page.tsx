@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react"
 import { useStore } from "@/components/store-context"
+import { MENU_ITEMS } from "@/components/sidebar"
+import { tenantCanAccessMenuItem } from "@/lib/tenant-permissions"
 import { formatCurrency } from "@/lib/utils"
 import { isAlmacenCategory, normalizeAlmacenBoxNumber } from "@/lib/almacen"
 import { isAlmacenSourceRecord, normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
@@ -40,7 +42,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 export default function ReportsPage() {
   // Include expenses for net profit calculation
-  const { sales, repairs, products, returns, expenses, payments, paymentAllocations, customers } = useStore()
+  const { sales, repairs, products, returns, expenses, payments, paymentAllocations, customers, currentUser, employees } = useStore()
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString())
   const [reportType, setReportType] = useState("monthly")
   const [selectedPeriod, setSelectedPeriod] = useState(new Date().getMonth().toString())
@@ -49,6 +51,14 @@ export default function ReportsPage() {
   const [selectedDateDay, setSelectedDateDay] = useState(new Date().getDate().toString())
   const [chartType, setChartType] = useState<"bar" | "line" | "area">("bar")
   const [showOnlyAlmacen, setShowOnlyAlmacen] = useState(false)
+  const canViewReportSection = (menuItemId: string) => {
+    const menuItem = MENU_ITEMS.find((item) => item.id === menuItemId)
+    return menuItem ? tenantCanAccessMenuItem(currentUser, employees, menuItem) : false
+  }
+  const canViewRepairs = canViewReportSection("repairs")
+  const canViewWholesale = canViewReportSection("wholesale-sales")
+  const visibleReportTabCount = 1 + Number(canViewRepairs) + Number(canViewWholesale)
+  const reportTabsGridClass = visibleReportTabCount === 1 ? "grid-cols-1" : visibleReportTabCount === 2 ? "grid-cols-2" : "grid-cols-3"
 
   const years = useMemo(() => {
     const currentYear = new Date().getFullYear()
@@ -1063,19 +1073,23 @@ export default function ReportsPage() {
         ) : null}
 
         <Tabs defaultValue="ventas" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 max-w-xl">
+          <TabsList className={`grid w-full ${reportTabsGridClass} max-w-xl`}>
             <TabsTrigger value="ventas" className="gap-2">
               <DollarSign className="h-4 w-4" />
               Ventas ({reportData.filteredSales.length + reportData.filteredDebtPayments.length})
             </TabsTrigger>
-            <TabsTrigger value="reparaciones" className="gap-2">
-              <CreditCard className="h-4 w-4" />
-              Reparaciones ({reportData.filteredRepairs.length})
-            </TabsTrigger>
-            <TabsTrigger value="por-mayor" className="gap-2">
-              <ShoppingBag className="h-4 w-4" />
-              Por Mayor ({reportData.wholesaleSales.length})
-            </TabsTrigger>
+            {canViewRepairs && (
+              <TabsTrigger value="reparaciones" className="gap-2">
+                <CreditCard className="h-4 w-4" />
+                Reparaciones ({reportData.filteredRepairs.length})
+              </TabsTrigger>
+            )}
+            {canViewWholesale && (
+              <TabsTrigger value="por-mayor" className="gap-2">
+                <ShoppingBag className="h-4 w-4" />
+                Por Mayor ({reportData.wholesaleSales.length})
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="ventas">
@@ -1139,7 +1153,7 @@ export default function ReportsPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="reparaciones">
+          {canViewRepairs && <TabsContent value="reparaciones">
             <Card>
               <CardHeader>
                 <CardTitle>Desglose de Reparaciones</CardTitle>
@@ -1182,10 +1196,10 @@ export default function ReportsPage() {
                 </Table>
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent>}
 
           {/* Ventas por Mayor Tab */}
-          <TabsContent value="por-mayor">
+          {canViewWholesale && <TabsContent value="por-mayor">
             <Card className="border-orange-500/20">
               <CardHeader>
                 <div className="flex items-center gap-3">
@@ -1283,7 +1297,7 @@ export default function ReportsPage() {
                 </Table>
               </CardContent>
             </Card>
-          </TabsContent>
+          </TabsContent>}
         </Tabs>
       </div>
     </div>

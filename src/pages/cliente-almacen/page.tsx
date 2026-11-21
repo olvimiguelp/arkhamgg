@@ -678,9 +678,15 @@ export default function CustomersPage() {
     : "text-amber-600"
 
   const loadGeneralCustomersForImport = useCallback(async () => {
+    if (!currentOwnerAdminId) {
+      setGeneralCustomersForImport([])
+      return
+    }
+
     const { data, error } = await supabase
       .from("customers")
       .select("*")
+      .eq("owner_admin_id", currentOwnerAdminId)
       .order("created_at", { ascending: false })
 
     if (error) {
@@ -691,7 +697,7 @@ export default function CustomersPage() {
 
     const mapped = (data || []).map((row) => mapGeneralCustomerRowToCustomer(row as Record<string, unknown>))
     setGeneralCustomersForImport(mapped)
-  }, [supabase])
+  }, [currentOwnerAdminId, supabase])
 
   const loadAlmacenCustomers = useCallback(async () => {
     let query = supabase.from("almacen_customer_accounts").select("*")
@@ -1889,9 +1895,14 @@ export default function CustomersPage() {
 
     setIsImportingGeneralCustomer(true)
     try {
+      if (!currentOwnerAdminId) {
+        throw new Error("No se pudo identificar el administrador propietario de esta cuenta.")
+      }
+
       const { data: existingBySource, error: existingError } = await supabase
         .from("almacen_customer_accounts")
         .select("id, name")
+        .eq("owner_admin_id", currentOwnerAdminId)
         .eq("source_customer_id", sourceCustomer.id)
         .maybeSingle()
 

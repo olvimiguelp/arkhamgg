@@ -29,10 +29,35 @@ export async function getOrCreatePublicCatalogShare({
   if (sourceTable === "armacen" && !category) {
     throw new Error("Selecciona una categoría del almacén.")
   }
+  const requestedProductIds = [...new Set(productIds.map((id) => id.trim()).filter(Boolean))]
+  if (requestedProductIds.length === 0) {
+    throw new Error("No hay productos disponibles para compartir en este catálogo.")
+  }
+
   const supabase = createClient()
+  const productIdChunks = Array.from(
+    { length: Math.ceil(requestedProductIds.length / 200) },
+    (_, index) => requestedProductIds.slice(index * 200, (index + 1) * 200),
+  )
+  const productResults = await Promise.all(
+    productIdChunks.map((ids) =>
+      supabase.from(sourceTable).select("id").eq("owner_admin_id", ownerAdminId).in("id", ids),
+    ),
+  )
+  const productsError = productResults.find((result) => result.error)?.error
+  if (productsError) throw productsError
+
+  const allowedProductIds = new Set(
+    productResults.flatMap((result) => (result.data || []).map((product) => String(product.id))),
+  )
+  const unauthorizedProducts = requestedProductIds.filter((id) => !allowedProductIds.has(id))
+  if (unauthorizedProducts.length > 0) {
+    throw new Error("El catálogo contiene productos que no pertenecen a esta empresa. Recarga los productos e inténtalo de nuevo.")
+  }
+
   let lookup = supabase
     .from("catalog_shares")
-    .select("token")
+    .select("id, token")
     .eq("owner_admin_id", ownerAdminId)
     .eq("price_mode", priceMode)
     .eq("source_table", sourceTable)
@@ -45,13 +70,22 @@ export async function getOrCreatePublicCatalogShare({
     .maybeSingle()
 
   if (lookupError) throw lookupError
-  if (existing?.token) return existing.token
+  if (existing?.token) {
+    const { error: updateError } = await supabase
+      .from("catalog_shares")
+      .update({ product_ids: requestedProductIds, business_name: businessName })
+      .eq("id", existing.id)
+      .eq("owner_admin_id", ownerAdminId)
+
+    if (updateError) throw updateError
+    return existing.token
+  }
 
   const token = crypto.randomUUID().replaceAll("-", "")
   const { error: createError } = await supabase.from("catalog_shares").insert({
     token,
     owner_admin_id: ownerAdminId,
-    product_ids: productIds,
+    product_ids: requestedProductIds,
     price_mode: priceMode,
     source_table: sourceTable,
     category_filter: category,

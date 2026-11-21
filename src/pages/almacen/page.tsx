@@ -53,7 +53,7 @@ import {
   normalizeAlmacenCategory,
   normalizeAlmacenBoxNumber,
 } from "@/lib/almacen"
-import { sameSaleItemSource } from "@/lib/transaction-classification"
+import { normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
 import {
   deleteProductImageFromStorage,
   isProductImagePairOptimized,
@@ -182,7 +182,13 @@ export default function AlmacenPage() {
   const canDeleteProducts = currentUser?.role === "admin" || Boolean(employeePermissions?.canDelete)
 
   const almacenProducts = products
-    .filter((product) => Boolean(product.boxNumber) || isAlmacenCategory(product.category))
+    .filter((product) => {
+      const sourceTable = normalizeInventorySourceTable(product.sourceTable)
+      if (sourceTable) return sourceTable === "armacen"
+
+      // Conserva la detección de productos antiguos que todavía no guardan su origen.
+      return Boolean(normalizeAlmacenBoxNumber(product.boxNumber)) || isAlmacenCategory(product.category)
+    })
     .sort((a, b) => {
       const boxCompare = compareAlmacenBoxNumbers(a.boxNumber, b.boxNumber)
       if (boxCompare !== 0) return boxCompare
@@ -1447,7 +1453,6 @@ export default function AlmacenPage() {
                 <Input
                   type="number"
                   min="1"
-                  placeholder="Ej: 1"
                   value={formData.boxNumber}
                   onChange={(event) => handleInputChange("boxNumber", event.target.value)}
                 />
@@ -1498,18 +1503,9 @@ export default function AlmacenPage() {
               <div className="space-y-2">
                 <Label>Nombre del producto</Label>
                 <Input
-                  placeholder="Ej: Pantalla Samsung A14"
+                  placeholder="Nombre del producto"
                   value={formData.name}
                   onChange={(event) => handleInputChange("name", event.target.value)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>IMEI (Opcional)</Label>
-                <Input
-                  placeholder="Ej: 351756051523999"
-                  value={formData.imei}
-                  onChange={(event) => handleInputChange("imei", event.target.value)}
                 />
               </div>
             </div>

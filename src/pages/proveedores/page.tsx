@@ -336,7 +336,7 @@ export default function SuppliersPage() {
               <div className="space-y-2">
                 <Label>Nombre Comercial</Label>
                 <Input
-                  placeholder="Ej: Distribuidora Global"
+                  placeholder="Nombre del proveedor"
                   value={formData.name}
                   onChange={(e) => handleInputChange("name", e.target.value)}
                 />
@@ -344,7 +344,7 @@ export default function SuppliersPage() {
               <div className="space-y-2">
                 <Label>RNC</Label>
                 <Input
-                  placeholder="Ej: 1-01-12345-6"
+                  placeholder="RNC o identificación fiscal"
                   value={formData.rnc}
                   onChange={(e) => handleInputChange("rnc", e.target.value)}
                 />
@@ -354,7 +354,7 @@ export default function SuppliersPage() {
             <div className="space-y-2">
               <Label>Razón Social</Label>
               <Input
-                placeholder="Ej: Distribuidora Global S.R.L."
+                placeholder="Razón social"
                 value={formData.razonSocial}
                 onChange={(e) => handleInputChange("razonSocial", e.target.value)}
               />

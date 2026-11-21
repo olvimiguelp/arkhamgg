@@ -508,7 +508,7 @@ export default function MensajesPage() {
                       type="text"
                       value={targetVersion}
                       onChange={(e) => setTargetVersion(e.target.value)}
-                      placeholder="ej: 2 o 2.0.1"
+                      placeholder="Versión"
                       className="w-full px-4 py-2.5 rounded-xl border border-border bg-background text-foreground"
                     />
                     <p className="mt-1 text-xs text-muted-foreground">

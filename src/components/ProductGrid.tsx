@@ -12,6 +12,10 @@ export interface PGItem {
   name: string;
   category?: string;
   boxNumber?: string;
+  locationType?: "box" | "zone" | null;
+  locationValue?: string;
+  locationBoxNumber?: string;
+  locationZone?: string;
   capacity?: string | number;
   stock?: number;
   sellPrice?: number;
@@ -24,10 +28,14 @@ export default function ProductGrid({
   products = [],
   onCardClick = () => {},
   priceMode = "sell",
+  showLocationInsteadOfCategory = false,
+  showCapacity = true,
 }: {
   products: PGItem[];
   onCardClick?: (p: PGItem) => void;
   priceMode?: "sell" | "wholesale";
+  showLocationInsteadOfCategory?: boolean;
+  showCapacity?: boolean;
 }) {
   const sortedProducts = useMemo(() => {
     return [...products].sort((a, b) => {
@@ -44,9 +52,19 @@ export default function ProductGrid({
       <div className="product-grid">
         {sortedProducts.map((p) => {
           const boxNumber = normalizeAlmacenBoxNumber(p.boxNumber);
+          const locationBoxNumber = (
+            p.locationBoxNumber || (p.locationType === "box" ? p.locationValue : p.boxNumber) || ""
+          ).trim();
+          const locationZone = (p.locationZone || (p.locationType === "zone" ? p.locationValue : "") || "").trim();
+          const locationLabel = [
+            locationZone && `Zona ${locationZone}`,
+            locationBoxNumber && `Caja ${locationBoxNumber}`,
+          ].filter(Boolean).join(" · ");
           const explicitSource = normalizeInventorySourceTable(p.sourceTable);
           const isAlmacenItem = explicitSource ? explicitSource === "armacen" : Boolean(boxNumber) || isAlmacenCategory(p.category);
-          const categoryLabel = isAlmacenItem ? getAlmacenCategoryLabel(p.category) : p.category || "Sin categoria";
+          const categoryLabel = showLocationInsteadOfCategory
+            ? locationLabel || "Sin ubicación"
+            : isAlmacenItem ? getAlmacenCategoryLabel(p.category) : p.category || "Sin categoria";
 
           return (
             <article
@@ -73,12 +91,12 @@ export default function ProductGrid({
                 {p.imageUrl && (
                   <img src={p.imageUrl} alt={p.name} className="h-24 w-24 md:h-32 md:w-32 rounded-md object-cover border border-border mx-auto mb-2" />
                 )}
-                {isAlmacenItem && boxNumber && (
+                {isAlmacenItem && boxNumber && !showLocationInsteadOfCategory && (
                   <div className="meta">
                     <span className="card-tag card-tag-box">Caja {boxNumber}</span>
                   </div>
                 )}
-                {p.capacity && <div className="meta">Capacidad: {p.capacity}</div>}
+                {showCapacity && p.capacity && <div className="meta">Capacidad: {p.capacity}</div>}
               </div>
 
               <footer className="card-footer">

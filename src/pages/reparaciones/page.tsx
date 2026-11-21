@@ -1026,7 +1026,7 @@ export default function ReparacionesPage() {
             <Textarea
               autoFocus
               rows={6}
-              placeholder="Ej: Se encontró daño en la placa. No es posible reparar el equipo..."
+              placeholder="Descripción del diagnóstico"
               value={technicianNotes}
               onChange={(event) => setTechnicianNotes(event.target.value)}
             />

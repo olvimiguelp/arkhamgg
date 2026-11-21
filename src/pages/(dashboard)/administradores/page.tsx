@@ -848,7 +848,7 @@ function AdminFormModal({
               value={businessName}
               onChange={(e) => setBusinessName(e.target.value)}
               required
-              placeholder="Ej: Mi Empresa S.A."
+              placeholder="Nombre de la empresa"
               className="w-full px-4 py-3 rounded-xl border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             />
           </div>
@@ -885,7 +885,7 @@ function AdminFormModal({
                 type="tel"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                placeholder="Ej: +1 809 123-4567"
+                placeholder="Teléfono"
                 className="w-full px-4 py-3 rounded-xl border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
               />
             </div>
@@ -899,7 +899,7 @@ function AdminFormModal({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              placeholder="email@ejemplo.com"
+              placeholder="Correo electrónico"
               className="w-full px-4 py-3 rounded-xl border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             />
           </div>

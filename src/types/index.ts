@@ -2,6 +2,8 @@ export interface Product {
   id: string;
   name: string;
   category: string;
+  locationType?: "box" | "zone";
+  locationValue?: string;
   imei?: string;
   price: number;
   stock: number;

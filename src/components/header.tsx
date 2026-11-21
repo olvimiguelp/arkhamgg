@@ -735,7 +735,7 @@ export function Header() {
             <div className="space-y-2">
               <Label>Descripción del Gasto</Label>
               <Input
-                placeholder="Ej: Compra de agua, Almuerzo, Transporte"
+                placeholder="Descripción de la compra"
                 value={expenseDescription}
                 onChange={(e) => setExpenseDescription(e.target.value)}
               />
@@ -810,7 +810,7 @@ export function Header() {
               <Label htmlFor="purchase-customer">Nombre del cliente</Label>
               <Input
                 id="purchase-customer"
-                placeholder="Ej: Juan Pérez"
+                placeholder="Nombre del cliente"
                 value={purchaseCustomerName}
                 onChange={(event) => setPurchaseCustomerName(event.target.value)}
               />
@@ -819,7 +819,7 @@ export function Header() {
               <Label htmlFor="purchase-description">Descripción de la compra</Label>
               <Input
                 id="purchase-description"
-                placeholder="Ej: iPhone 13, IMEI..."
+                placeholder="Descripción de la compra"
                 value={purchaseDescription}
                 onChange={(event) => setPurchaseDescription(event.target.value)}
               />

@@ -16,7 +16,7 @@
 --   npm run build:migrations
 --   o: powershell -File src/scripts/build-all-migrations.ps1
 --
--- Generado: 2026-11-18 02:48:58 -04:00
+-- Generado: 2026-11-20 19:16:34 -04:00
 -- Lista de archivos fuente al final del archivo (buscar "FIN DE MIGRACIONES")
 -- =============================================================================
 
@@ -338,6 +338,8 @@ CREATE TABLE IF NOT EXISTS products (
   supplier VARCHAR(255),
   capacity VARCHAR(50),
   imei VARCHAR(50),
+  location_type TEXT,
+  location_value TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -4941,10 +4943,178 @@ $$;
 ALTER TABLE public.almacen_closings
   ADD COLUMN IF NOT EXISTS financial_summary JSONB;
 
+-- ====================================================
+-- Source: 077-add-product-location-fields.sql
+-- ====================================================
+
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS location_type TEXT,
+  ADD COLUMN IF NOT EXISTS location_value TEXT,
+  ADD COLUMN IF NOT EXISTS location_box_number TEXT,
+  ADD COLUMN IF NOT EXISTS location_zone TEXT;
+
+UPDATE public.products
+SET location_box_number = location_value
+WHERE location_type = 'box'
+  AND location_box_number IS NULL
+  AND location_value IS NOT NULL;
+
+UPDATE public.products
+SET location_zone = location_value
+WHERE location_type = 'zone'
+  AND location_zone IS NULL
+  AND location_value IS NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'products_location_type_check'
+      AND conrelid = 'public.products'::regclass
+  ) THEN
+    ALTER TABLE public.products
+      ADD CONSTRAINT products_location_type_check
+      CHECK (location_type IS NULL OR location_type IN ('box', 'zone'));
+  END IF;
+END;
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_products_owner_location
+  ON public.products(owner_admin_id, location_type, location_value)
+  WHERE location_type IS NOT NULL AND location_value IS NOT NULL;
+
+-- ====================================================
+-- Source: 078-public-catalog-product-scope.sql
+-- ====================================================
+
+-- Limit public catalog reads and orders to the product IDs saved on the share,
+-- in addition to the tenant owner. This keeps a share from exposing unrelated
+-- inventory if tenant metadata or a previously saved share is inconsistent.
+DO $$
+DECLARE
+  function_definition TEXT;
+  original_definition TEXT;
+BEGIN
+  SELECT pg_get_functiondef(
+    'public.get_public_catalog_snapshot(text,integer,integer,text,text,boolean)'::REGPROCEDURE
+  ) INTO function_definition;
+
+  IF function_definition IS NULL THEN
+    RAISE EXCEPTION 'No se encontró get_public_catalog_snapshot';
+  END IF;
+
+  IF POSITION('p.id = ANY (share_row.product_ids)' IN function_definition) = 0 THEN
+    original_definition := function_definition;
+    function_definition := REPLACE(
+      function_definition,
+      'WHERE p.owner_admin_id = share_row.owner_admin_id',
+      'WHERE p.owner_admin_id = share_row.owner_admin_id AND p.id = ANY (share_row.product_ids)'
+    );
+    IF function_definition = original_definition THEN
+      RAISE EXCEPTION 'No se encontró el filtro de propietario en get_public_catalog_snapshot';
+    END IF;
+    EXECUTE function_definition;
+  END IF;
+
+  SELECT pg_get_functiondef(
+    'public.get_public_catalog_products(text,integer,integer,text,text)'::REGPROCEDURE
+  ) INTO function_definition;
+
+  IF function_definition IS NULL THEN
+    RAISE EXCEPTION 'No se encontró get_public_catalog_products';
+  END IF;
+
+  IF POSITION('p.id = ANY (share_row.product_ids)' IN function_definition) = 0 THEN
+    original_definition := function_definition;
+    function_definition := REPLACE(
+      function_definition,
+      'WHERE p.owner_admin_id = share_row.owner_admin_id',
+      'WHERE p.owner_admin_id = share_row.owner_admin_id AND p.id = ANY (share_row.product_ids)'
+    );
+    IF function_definition = original_definition THEN
+      RAISE EXCEPTION 'No se encontró el filtro de propietario en get_public_catalog_products';
+    END IF;
+    EXECUTE function_definition;
+  END IF;
+
+  SELECT pg_get_functiondef(
+    'public.get_public_catalog_categories(text)'::REGPROCEDURE
+  ) INTO function_definition;
+
+  IF function_definition IS NULL THEN
+    RAISE EXCEPTION 'No se encontró get_public_catalog_categories';
+  END IF;
+
+  IF POSITION('p.id = ANY (share_row.product_ids)' IN function_definition) = 0 THEN
+    original_definition := function_definition;
+    function_definition := REPLACE(
+      function_definition,
+      'WHERE p.owner_admin_id = share_row.owner_admin_id',
+      'WHERE p.owner_admin_id = share_row.owner_admin_id AND p.id = ANY (share_row.product_ids)'
+    );
+    IF function_definition = original_definition THEN
+      RAISE EXCEPTION 'No se encontró el filtro de propietario en get_public_catalog_categories';
+    END IF;
+    EXECUTE function_definition;
+  END IF;
+
+  SELECT pg_get_functiondef(
+    'public.submit_catalog_order(text,text,text,jsonb)'::REGPROCEDURE
+  ) INTO function_definition;
+
+  IF function_definition IS NULL THEN
+    RAISE EXCEPTION 'No se encontró submit_catalog_order';
+  END IF;
+
+  IF POSITION('a.id = ANY (share_row.product_ids)' IN function_definition) = 0
+    OR POSITION('p.id = ANY (share_row.product_ids)' IN function_definition) = 0 THEN
+    original_definition := function_definition;
+    function_definition := REPLACE(
+      function_definition,
+      'AND a.owner_admin_id = share_row.owner_admin_id',
+      'AND a.owner_admin_id = share_row.owner_admin_id AND a.id = ANY (share_row.product_ids)'
+    );
+    function_definition := REPLACE(
+      function_definition,
+      'AND p.owner_admin_id = share_row.owner_admin_id',
+      'AND p.owner_admin_id = share_row.owner_admin_id AND p.id = ANY (share_row.product_ids)'
+    );
+
+    IF function_definition = original_definition
+      OR POSITION('a.id = ANY (share_row.product_ids)' IN function_definition) = 0
+      OR POSITION('p.id = ANY (share_row.product_ids)' IN function_definition) = 0 THEN
+      RAISE EXCEPTION 'No se encontraron los filtros de propietario en submit_catalog_order';
+    END IF;
+    EXECUTE function_definition;
+  END IF;
+END;
+$$;
+
+-- ====================================================
+-- Source: 079-add-product-location-pair-fields.sql
+-- ====================================================
+
+ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS location_box_number TEXT,
+  ADD COLUMN IF NOT EXISTS location_zone TEXT;
+
+UPDATE public.products
+SET location_box_number = location_value
+WHERE location_type = 'box'
+  AND location_box_number IS NULL
+  AND location_value IS NOT NULL;
+
+UPDATE public.products
+SET location_zone = location_value
+WHERE location_type = 'zone'
+  AND location_zone IS NULL
+  AND location_value IS NOT NULL;
+
 -- =============================================================================
 -- FIN DE MIGRACIONES
 -- =============================================================================
--- Archivos concatenados (79):
+-- Archivos concatenados (82):
 --   - 001-create-employees-table.sql
 --   - 002-create-sales-table.sql
 --   - 003-create-returns-table.sql
@@ -5024,3 +5194,6 @@ ALTER TABLE public.almacen_closings
 --   - 074-public-catalog-out-of-stock.sql
 --   - 075-public-catalog-word-search.sql
 --   - 076-add-financial-summary-to-almacen-closings.sql
+--   - 077-add-product-location-fields.sql
+--   - 078-public-catalog-product-scope.sql
+--   - 079-add-product-location-pair-fields.sql

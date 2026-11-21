@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS products (
   supplier VARCHAR(255),
   capacity VARCHAR(50),
   imei VARCHAR(50),
+  location_type TEXT,
+  location_value TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

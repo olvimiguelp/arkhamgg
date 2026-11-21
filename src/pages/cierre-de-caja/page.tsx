@@ -2602,7 +2602,7 @@ export default function CashClosingPage() {
               <Input
                 value={expenseDescription}
                 onChange={(e) => setExpenseDescription(e.target.value)}
-                placeholder="Ej: Compra de suministros"
+                placeholder="Descripción del gasto"
               />
             </div>
             <div className="grid grid-cols-2 gap-4">

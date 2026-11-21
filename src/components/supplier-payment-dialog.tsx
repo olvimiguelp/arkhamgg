@@ -26,7 +26,14 @@ export function SupplierPaymentDialog({ open, onOpenChange, initialSupplierId = 
   const [note, setNote] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [saving, setSaving] = useState(false)
-  useEffect(() => { if (open) setSupplierId(initialSupplierId) }, [initialSupplierId, open])
+  useEffect(() => {
+    if (!open) return
+    setSupplierId(initialSupplierId)
+    setPurchaseId("auto")
+    setAmount(0)
+    setNote("")
+    setFile(null)
+  }, [initialSupplierId, open])
   const supplier = suppliers.find((item) => item.id === supplierId)
   const pending = useMemo(() => purchases.filter((purchase) => purchase.supplierId === supplierId && purchase.total - purchase.amountPaid > 0).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()), [purchases, supplierId])
 
