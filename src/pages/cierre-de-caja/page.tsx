@@ -589,6 +589,8 @@ export default function CashClosingPage() {
   )
   const dayPayments = useMemo(
     () => filterByDate(payments, "date").filter((payment) => {
+      const tenantId = currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id
+      if (!tenantId || payment.ownerAdminId !== tenantId) return false
       const paymentEmployeeId = readEmployeeIdFromRecord(payment as Record<string, unknown>)
       if (selectedEmployeeId === "all") return true
       if (paymentEmployeeId === selectedEmployeeId) return true
@@ -602,7 +604,7 @@ export default function CashClosingPage() {
           payment.createdByEmployeeName.trim().toLowerCase() === selectedEmployee.name.trim().toLowerCase(),
       )
     }),
-    [payments, selectedDate, selectedEmployeeId, employees],
+    [payments, selectedDate, selectedEmployeeId, employees, currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id],
   )
   const dayRepairPayments = useMemo(
     () => repairs.flatMap((repair) => {

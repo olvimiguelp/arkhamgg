@@ -147,6 +147,7 @@ export interface Customer {
 
 export interface Payment {
   id: string
+  ownerAdminId?: string
   customerId: string
   amount: number
   date: string
@@ -722,6 +723,7 @@ const mapEmployeeFromDB = (rec: any): Employee => ({
 
 const mapPaymentFromDB = (rec: any): Payment => ({
   id: rec.id,
+  ownerAdminId: rec.owner_admin_id || undefined,
   invoiceNumber: rec.invoice_number,
   customerId: rec.customer_id,
   amount: Number.parseFloat(rec.amount) || 0,
@@ -4198,6 +4200,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const newPayment: Payment = {
       ...paymentInput,
       id: tempId,
+      ownerAdminId: getTenantAdminId() || undefined,
       invoiceNumber: generateInvoiceNumber(),
       date: new Date().toISOString(),
       paymentMethod: normalizePaymentMethod(paymentInput.paymentMethod),
