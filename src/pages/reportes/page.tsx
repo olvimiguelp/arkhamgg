@@ -154,14 +154,12 @@ export default function ReportsPage() {
       return resolveSalePaidAmount(sale) || (!isNewCostAccountingSale && itemsTotal > 0 && sale.status !== "credito" ? itemsTotal : 0)
     }
 
-    const resolveSaleCost = (sale: (typeof sales)[number], items: (typeof sales)[number]["items"]) => {
+    const resolveSaleCost = (items: (typeof sales)[number]["items"]) => {
       const totalCost = items.reduce((acc, item) => acc + item.buyPrice * item.quantity, 0)
-      const saleTotal = Math.max(0, Number(sale.total) || 0)
-      const paidRatio = saleTotal > 0 ? resolveSalePaidAmount(sale) / saleTotal : 0
-      if (!showOnlyAlmacen) return totalCost * paidRatio
-
-      const saleCost = sale.items.reduce((acc, item) => acc + item.buyPrice * item.quantity, 0)
-      return saleCost > 0 ? totalCost * paidRatio : 0
+      // El costo del inventario se reconoce cuando se vende el producto,
+      // aunque el cliente todavía deba parte o todo el precio. Los abonos
+      // afectan los ingresos, pero no cambian cuánto costó la mercancía.
+      return totalCost
     }
 
     const resolveReturnItems = (returnRecord: (typeof returns)[number]) =>
@@ -201,7 +199,7 @@ export default function ReportsPage() {
             sale,
             items,
             total: resolveSaleTotal(sale, items),
-            cost: resolveSaleCost(sale, items),
+            cost: resolveSaleCost(items),
           }
         })
         .filter((row) => !showOnlyAlmacen || row.items.length > 0)
@@ -233,6 +231,7 @@ export default function ReportsPage() {
     const yearDebtPayments = payments.filter(
       (payment) =>
         payment.paymentKind === "debt_payment" &&
+        Number(payment.amount || 0) > 0 &&
         payment.customerType === (showOnlyAlmacen ? "almacen" : "general") &&
         new Date(payment.date).getFullYear().toString() === selectedYear,
     )

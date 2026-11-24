@@ -124,17 +124,6 @@ const normalizeProductSku = (value: string) => {
   return compact.toLocaleLowerCase()
 }
 
-const getNextProductId = (products: Array<Pick<Product, "sku">>) => {
-  const usedIds = new Set(products.map((product) => normalizeProductSku(product.sku)))
-  let sequence = 1
-
-  while (usedIds.has(normalizeProductSku(`PRD${String(sequence).padStart(6, "0")}`))) {
-    sequence += 1
-  }
-
-  return `PRD${String(sequence).padStart(6, "0")}`
-}
-
 export default function ProductsPage() {
   const { products, suppliers, addProduct, updateProduct, deleteProduct, setOnDialogOpen, employees, currentUser, sales } = useStore()
   const { toast } = useToast()
@@ -674,7 +663,7 @@ export default function ProductsPage() {
       return
     }
 
-    const sku = editingId ? formData.sku.trim() : getNextProductId(products)
+    const sku = formData.sku.trim()
     const name = formData.name.trim()
     const category = formData.category.trim() || "General"
     const buyPrice = formData.buyPrice.trim() === "" ? 0 : Number(formData.buyPrice)
@@ -685,7 +674,7 @@ export default function ProductsPage() {
     const minStock = formData.minStock.trim() === "" ? 0 : Number(formData.minStock)
 
     if (!sku || !name) {
-      toast({ title: "Faltan datos obligatorios", description: "Completa el nombre del producto. El ID se genera automáticamente.", variant: "destructive" })
+      toast({ title: "Faltan datos obligatorios", description: "Completa el ID y el nombre del producto.", variant: "destructive" })
       return
     }
 
@@ -1636,6 +1625,9 @@ export default function ProductsPage() {
                         {product.imei && (
                           <p className="text-xs text-muted-foreground">IMEI: {product.imei}</p>
                         )}
+                        {product.capacity && (
+                          <p className="text-xs text-muted-foreground">Capacidad: {product.capacity}</p>
+                        )}
                       </div>
                       <Badge variant="secondary" className="shrink-0">{product.category}</Badge>
                     </div>
@@ -1875,10 +1867,12 @@ export default function ProductsPage() {
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-4">
               <div className="space-y-2">
-                <Label>{editingId ? "ID" : "ID automático"}</Label>
+                <Label htmlFor="product-sku">ID</Label>
                 <Input
-                  value={editingId ? formData.sku : getNextProductId(products)}
-                  readOnly={!editingId}
+                  id="product-sku"
+                  placeholder="ID del producto"
+                  value={formData.sku}
+                  onChange={(e) => handleInputChange("sku", e.target.value)}
                 />
               </div>
               <div className="space-y-2">
