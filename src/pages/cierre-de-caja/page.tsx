@@ -604,29 +604,30 @@ export default function CashClosingPage() {
     }),
     [payments, selectedDate, selectedEmployeeId, employees],
   )
-  const dayRepairs = useMemo(
-    () =>
-      filterByDate(repairs, "date").filter((r) => {
-        if ((Number(r.deposit) || 0) <= 0) return false
-        if (selectedEmployeeId === "all") return true
-
-        const isSameTechId = r.technician === selectedEmployeeId
-        const isSameTechName = Boolean(
-          selectedEmployee &&
-            typeof r.technician === "string" &&
-            r.technician.trim().toLowerCase() === selectedEmployee.name.trim().toLowerCase(),
-        )
-        const rExt = r as unknown as { createdByEmployeeId?: string; createdByEmployeeName?: string }
-        const isSameCreatorId = rExt.createdByEmployeeId === selectedEmployeeId
-        const isSameCreatorName = Boolean(
-          selectedEmployee &&
-            typeof rExt.createdByEmployeeName === "string" &&
-            rExt.createdByEmployeeName.trim().toLowerCase() === selectedEmployee.name.trim().toLowerCase(),
-        )
-
-        return isSameTechId || isSameTechName || isSameCreatorId || isSameCreatorName
-      }),
-    [repairs, selectedDate, selectedEmployeeId, selectedEmployee],
+  const dayRepairPayments = useMemo(
+    () => repairs.flatMap((repair) => {
+      const recordedPayments = repair.depositPayments?.length
+        ? repair.depositPayments
+        : Number(repair.deposit) > 0
+          ? [{
+              amount: Number(repair.deposit),
+              date: repair.date,
+              employeeId: repair.createdByEmployeeId,
+              employeeName: repair.createdByEmployeeName,
+            }]
+          : []
+      return recordedPayments
+        .filter((payment) => filterByDate([payment]).length > 0)
+        .filter((payment) => {
+          if (selectedEmployeeId === "all") return true
+          const selectedEmployee = employees.find((employee) => employee.id === selectedEmployeeId)
+          return payment.employeeId === selectedEmployeeId || Boolean(
+            selectedEmployee && payment.employeeName?.trim().toLowerCase() === selectedEmployee.name.trim().toLowerCase(),
+          )
+        })
+        .map((payment) => ({ ...payment, repair }))
+    }),
+    [repairs, selectedDate, selectedEmployeeId, employees],
   )
   const dayExpenses = useMemo(
     () => filterByDate(expenses, "date").filter((expense) => {
@@ -846,8 +847,8 @@ export default function CashClosingPage() {
       methods[method].payments += Number(payment.amount) || 0
     })
 
-    dayRepairs.forEach((repair) => {
-      methods.cash.repairs += Number(repair.deposit) || 0
+    dayRepairPayments.forEach((payment) => {
+      methods.cash.repairs += Number(payment.amount) || 0
     })
 
     dayExpensesForClosing.forEach((expense) => {
@@ -860,7 +861,7 @@ export default function CashClosingPage() {
     cashClosingSales,
     cashClosingReturns,
     dayPayments,
-    dayRepairs,
+    dayRepairPayments,
     dayExpenses,
     salesById,
     getSaleGeneralPortion,
@@ -901,7 +902,7 @@ export default function CashClosingPage() {
       }, 0)
 
     const totalPayments = dayPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
-    const totalRepairs = dayRepairs.reduce((sum, r) => sum + (Number(r.deposit) || 0), 0)
+    const totalRepairs = dayRepairPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
     const totalExpenses = dayExpensesForClosing.reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
     const totalCostoVenta = dayExpensesForClosing
       .filter((e) => e.description && e.description.includes("Costo Venta"))
@@ -1023,7 +1024,6 @@ export default function CashClosingPage() {
     methodTotals,
     cashClosingReturns,
     dayPayments,
-    dayRepairs,
     dayExpenses,
     cashClosingSales,
     openingBalance,
@@ -1115,6 +1115,14 @@ export default function CashClosingPage() {
       const targetReturns = returns.filter((r) => r.date.startsWith(closingDate))
       const targetPayments = payments.filter((p) => p.date.startsWith(closingDate))
       const targetRepairs = repairs.filter((r) => r.date.startsWith(closingDate))
+      const targetRepairPayments = repairs.flatMap((repair) => {
+        const entries = repair.depositPayments?.length
+          ? repair.depositPayments
+          : Number(repair.deposit) > 0
+            ? [{ amount: Number(repair.deposit), date: repair.date }]
+            : []
+        return entries.filter((entry) => entry.date.startsWith(closingDate))
+      })
       const targetExpenses = expenses.filter((e) => e.date === closingDate)
 
       // 2. Calculate totals
@@ -1161,7 +1169,7 @@ export default function CashClosingPage() {
         },
         returns: { total: Number(closing.total_returns) || 0, count: validTargetReturns.length },
         payments: { total: Number(closing.total_payments) || 0, count: targetPayments.length },
-        repairs: { total: Number(closing.total_repairs) || 0, count: targetRepairs.length },
+        repairs: { total: Number(closing.total_repairs) || 0, count: targetRepairPayments.length || targetRepairs.length },
         expectedAmount: Number(closing.expected_amount) || 0,
         countedAmount: Number(closing.counted_amount) || 0,
         discrepancy: Number(closing.discrepancy) || 0,
@@ -1255,7 +1263,7 @@ export default function CashClosingPage() {
         total_payments: summary.totalPayments,
         payments_count: dayPayments.length,
         total_repairs: summary.totalRepairs,
-        repairs_count: dayRepairs.length,
+        repairs_count: dayRepairPayments.length,
         total_expenses: summary.totalExpenses,
         expenses_count: dayExpenses.length,
         denomination_counts: {},
@@ -1282,7 +1290,7 @@ export default function CashClosingPage() {
         },
         returns: { total: summary.totalReturns, count: cashClosingReturns.length },
         payments: { total: summary.totalPayments, count: dayPayments.length },
-        repairs: { total: summary.totalRepairs, count: dayRepairs.length },
+        repairs: { total: summary.totalRepairs, count: dayRepairPayments.length },
         expectedAmount: summary.expectedCash,
         countedAmount,
         discrepancy,

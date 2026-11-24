@@ -289,6 +289,12 @@ export interface Repair {
   technicianNotes?: string
   checklist?: any
   deposit?: number
+  depositPayments?: Array<{
+    amount: number
+    date: string
+    employeeId?: string
+    employeeName?: string
+  }>
   pendingBalance?: number
   technician?: string
   serviceItems?: Array<{ name: string; pieceCost: number; charge: number }>
@@ -882,6 +888,7 @@ const mapRepairFromDB = (rec: any): Repair => {
     technicianNotes: rec.technician_notes || rec.technicianNotes || parsedNotes.technicianNotes || undefined,
     checklist: rec.checklist ? (typeof rec.checklist === "string" ? JSON.parse(rec.checklist) : rec.checklist) : parsedNotes.checklist,
     deposit: Number(rec.deposit ?? parsedNotes.deposit ?? 0),
+    depositPayments: Array.isArray(parsedNotes.depositPayments) ? parsedNotes.depositPayments : undefined,
     pendingBalance: Number(rec.pending_balance ?? rec.pendingBalance ?? parsedNotes.pendingBalance ?? 0),
     technician: rec.technician || parsedNotes.technician || undefined,
     serviceItems: rec.service_items || parsedNotes.serviceItems || undefined,
@@ -5678,6 +5685,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const newRepair: Repair = {
         ...repair,
         technician: resolvedTechnician,
+        depositPayments: Number(repair.deposit) > 0 ? [{
+          amount: Number(repair.deposit),
+          date: dateStr,
+          employeeId: currentUser?.id,
+          employeeName: currentUser?.name,
+        }] : [],
         id: tempId,
         repair_number: repairNumber,
         date: dateStr,
@@ -5697,6 +5710,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         technicianNotes: repair.technicianNotes,
         checklist: repair.checklist,
         deposit: repair.deposit,
+        depositPayments: Number(repair.deposit) > 0 ? [{
+          amount: Number(repair.deposit),
+          date: dateStr,
+          employeeId: currentUser?.id,
+          employeeName: currentUser?.name,
+        }] : [],
         pendingBalance: repair.pendingBalance,
         technician: resolvedTechnician,
         createdByEmployeeId: currentUser?.id,
@@ -5789,6 +5808,26 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const supabase = createClient()
       const existing = previousRepairs.find((r) => r.id === id)
       const merged = { ...existing, ...updatedRepair }
+      const existingDeposit = Math.max(0, Number(existing?.deposit) || 0)
+      const nextDeposit = Math.max(0, Number(merged.deposit) || 0)
+      const depositPayments = existing?.depositPayments?.length
+        ? [...existing.depositPayments]
+        : existingDeposit > 0
+          ? [{
+              amount: existingDeposit,
+              date: existing?.date || new Date().toISOString(),
+              employeeId: existing?.createdByEmployeeId,
+              employeeName: existing?.createdByEmployeeName,
+            }]
+          : []
+      if (nextDeposit > existingDeposit) {
+        depositPayments.push({
+          amount: nextDeposit - existingDeposit,
+          date: new Date().toISOString(),
+          employeeId: currentUser?.id,
+          employeeName: currentUser?.name,
+        })
+      }
 
       const updateData: Record<string, unknown> = {}
 
@@ -5827,6 +5866,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         technicianNotes: merged.technicianNotes,
         checklist: merged.checklist,
         deposit: merged.deposit,
+        depositPayments,
         pendingBalance: merged.pendingBalance,
         technician: merged.technician,
         statusHistory,
@@ -5863,8 +5903,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           if (insertServicesError) throw insertServicesError
         }
       }
-      await archiveRepair({ ...merged, id } as Repair)
-      setRepairs((prev) => prev.map((repair) => (repair.id === id ? { ...repair, ...updatedRepair } : repair)))
+      await archiveRepair({ ...merged, id, depositPayments } as Repair)
+      setRepairs((prev) => prev.map((repair) => (repair.id === id ? { ...repair, ...updatedRepair, depositPayments } : repair)))
     } catch (error) {
       console.error("Error updating repair:", error)
       // Supabase es la fuente de verdad; no se conserva un cambio local fallido.
