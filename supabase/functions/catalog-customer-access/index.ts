@@ -246,9 +246,23 @@ async function handleRequest(
   if (body.action === "delete") {
     const actor = await requireStaff(supabase, body, "delete")
     const id = requireText(body.customer_id, "La cuenta del cliente")
+
+    // Keep order history while removing its account link, even if an older
+    // database deployment does not yet have ON DELETE SET NULL configured.
+    const { error: ordersError } = await supabase.from("catalog_order_history")
+      .update({ catalog_customer_id: null })
+      .eq("owner_admin_id", actor.ownerAdminId)
+      .eq("catalog_customer_id", id)
+    if (ordersError) throw new RequestError(`No se pudieron conservar los pedidos de la cuenta: ${ordersError.message}`, 500)
+
+    const { error: sessionsError } = await supabase.from("catalog_customer_sessions")
+      .delete()
+      .eq("customer_id", id)
+    if (sessionsError) throw new RequestError(`No se pudieron cerrar las sesiones de la cuenta: ${sessionsError.message}`, 500)
+
     const { data, error } = await supabase.from("catalog_customer_accounts").delete()
       .eq("owner_admin_id", actor.ownerAdminId).eq("id", id).select("id").maybeSingle()
-    if (error) throw new RequestError("No se pudo eliminar la cuenta del catálogo", 500)
+    if (error) throw new RequestError(`No se pudo eliminar la cuenta del catálogo: ${error.message}`, 500)
     if (!data) throw new RequestError("La cuenta ya no está disponible", 404)
     return { deleted: true }
   }

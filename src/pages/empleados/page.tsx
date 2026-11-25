@@ -906,7 +906,7 @@ export default function EmpleadosPage() {
             <div className="flex flex-wrap gap-2">
             {canAccessEmployees && <Button variant="outline" onClick={openCatalogCustomerDialog} className="min-h-11">
               <Users className="mr-2 h-4 w-4" />
-              Usuarios del catálogo de almacén
+              Usuarios del catálogo
             </Button>}
             <Button variant="outline" onClick={() => setIsPublicCatalogDialogOpen(true)} className="min-h-11">
               <Share2 className="mr-2 h-4 w-4" />
@@ -1365,7 +1365,7 @@ export default function EmpleadosPage() {
       >
         <DialogContent className="h-[85dvh] w-[85vw] max-w-none content-start overflow-y-auto sm:max-w-none">
           <DialogHeader>
-            <DialogTitle>Usuarios del catálogo de almacén</DialogTitle>
+            <DialogTitle>Usuarios del catálogo</DialogTitle>
             <DialogDescription>
               Crea cada cuenta con un correo y una contraseña. El cliente inicia sesión desde el enlace principal del catálogo y queda vinculado a tu empresa; las cuentas aparecen aquí aunque todavía no hayan realizado pedidos.
             </DialogDescription>
@@ -1606,7 +1606,7 @@ export default function EmpleadosPage() {
       <Dialog open={isPublicCatalogDialogOpen} onOpenChange={setIsPublicCatalogDialogOpen}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>Compartir catálogo</DialogTitle></DialogHeader>
-          <Button variant="outline" onClick={() => {setIsPublicCatalogDialogOpen(false);openCatalogCustomerDialog()}}>Usuarios del catálogo de almacén</Button>
+          <Button variant="outline" onClick={() => {setIsPublicCatalogDialogOpen(false);openCatalogCustomerDialog()}}>Usuarios del catálogo</Button>
           {isPublicCatalogDialogOpen && <CatalogPublication isAdmin={isAdmin} ownerId={currentUser?.id || ""}
             credentials={getCatalogStaffCredentials} warehouse={almacenCatalogCategories}
             products={productCategoryOptions} />}
