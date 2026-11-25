@@ -64,7 +64,7 @@ const paymentMethodLabels: Record<PaymentMethod, string> = {
 const getPaymentMethodLabel = (value: unknown) => paymentMethodLabels[normalizePaymentMethod(value)]
 
 export default function HistorialFacturasPage() {
-  const { sales, payments, deleteSale, deletePayment, customers, currentUser, employees } = useStore()
+  const { sales, payments, deleteSale, deletePayment, loadMoreSales, loadMorePayments, customers, currentUser, employees } = useStore()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedMonth, setSelectedMonth] = useState<string>("all")
@@ -75,6 +75,8 @@ export default function HistorialFacturasPage() {
   const [activeTab, setActiveTab] = useState("database")
   const [selectedTransaction, setSelectedTransaction] = useState<unknown>(null)
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMoreSales, setHasMoreSales] = useState(true)
 
   // (Removed storage/archive invoice state — not used)
 
@@ -848,6 +850,24 @@ export default function HistorialFacturasPage() {
 
         {/* storage tab removed */}
       </Tabs>
+
+      {(sales.length >= 100 || payments.length >= 100) && hasMoreSales && (
+        <div className="flex justify-center py-4">
+          <Button variant="outline" disabled={isLoadingMore} onClick={async () => {
+            setIsLoadingMore(true)
+            try {
+              const [loadedSales, loadedPayments] = await Promise.all([loadMoreSales(), loadMorePayments()])
+              if (loadedSales < 100 && loadedPayments < 100) setHasMoreSales(false)
+            } catch (error) {
+              toast({ title: "No se pudieron cargar más facturas", description: error instanceof Error ? error.message : undefined, variant: "destructive" })
+            } finally {
+              setIsLoadingMore(false)
+            }
+          }}>
+            {isLoadingMore ? "Cargando…" : "Cargar 100 facturas más"}
+          </Button>
+        </div>
+      )}
 
       <SaleDetailsDialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog} sale={selectedTransaction} />
     </div>

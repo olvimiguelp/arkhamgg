@@ -503,6 +503,7 @@ export default function CashClosingPage() {
       const { data: almacenCustomersData } = await supabase
         .from("almacen_customer_accounts")
         .select("*")
+        .eq("owner_admin_id", currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "__no_tenant__")
       if (almacenCustomersData) setAlmacenCustomers(almacenCustomersData)
 
       const fallbackIds = new Set<string>(
@@ -511,7 +512,10 @@ export default function CashClosingPage() {
           .map((product) => String(product.id)),
       )
 
-      const { data: almacenIdsData, error: almacenIdsError } = await supabase.from("armacen").select("id")
+      const { data: almacenIdsData, error: almacenIdsError } = await supabase
+        .from("armacen")
+        .select("id")
+        .eq("owner_admin_id", currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "__no_tenant__")
       if (almacenIdsError) {
         console.log("[v0] Error loading armacen ids:", almacenIdsError)
         setAlmacenProductIds(fallbackIds)
@@ -591,6 +595,10 @@ export default function CashClosingPage() {
     () => filterByDate(payments, "date").filter((payment) => {
       const tenantId = currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id
       if (!tenantId || payment.ownerAdminId !== tenantId) return false
+      const belongsToTenantCustomer = payment.customerType === "almacen"
+        ? almacenCustomers.some((customer) => customer.id === payment.customerId)
+        : customers.some((customer) => customer.id === payment.customerId)
+      if (!belongsToTenantCustomer) return false
       const paymentEmployeeId = readEmployeeIdFromRecord(payment as Record<string, unknown>)
       if (selectedEmployeeId === "all") return true
       if (paymentEmployeeId === selectedEmployeeId) return true
@@ -604,7 +612,7 @@ export default function CashClosingPage() {
           payment.createdByEmployeeName.trim().toLowerCase() === selectedEmployee.name.trim().toLowerCase(),
       )
     }),
-    [payments, selectedDate, selectedEmployeeId, employees, currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id],
+    [payments, selectedDate, selectedEmployeeId, employees, customers, almacenCustomers, currentUser?.adminId, currentUser?.ownerAdminId, currentUser?.id],
   )
   const dayRepairPayments = useMemo(
     () => repairs.flatMap((repair) => {
@@ -1115,7 +1123,14 @@ export default function CashClosingPage() {
       const closingDate = closing.date
       const targetSales = sales.filter((s) => s.date.startsWith(closingDate))
       const targetReturns = returns.filter((r) => r.date.startsWith(closingDate))
-      const targetPayments = payments.filter((p) => p.date.startsWith(closingDate))
+      const tenantId = currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id
+      const targetPayments = payments.filter(
+        (payment) => payment.ownerAdminId === tenantId && payment.date.startsWith(closingDate) && (
+          payment.customerType === "almacen"
+            ? almacenCustomers.some((customer) => customer.id === payment.customerId)
+            : customers.some((customer) => customer.id === payment.customerId)
+        ),
+      )
       const targetRepairs = repairs.filter((r) => r.date.startsWith(closingDate))
       const targetRepairPayments = repairs.flatMap((repair) => {
         const entries = repair.depositPayments?.length

@@ -172,6 +172,7 @@ const DEFAULT_EMPLOYEE_PERMISSIONS: Employee["permissions"] = {
   clienteAlmacen: false,
   almacenClosing: false,
   almacenInvoiceHistory: false,
+  warehouseReports: false,
   wholesaleSales: false,
   wholesaleDiscounts: false,
   turnReport: false,
@@ -199,6 +200,7 @@ const ADMIN_EMPLOYEE_PERMISSIONS: Employee["permissions"] = {
   clienteAlmacen: true,
   almacenClosing: true,
   almacenInvoiceHistory: true,
+  warehouseReports: true,
   wholesaleSales: true,
   wholesaleDiscounts: true,
   turnReport: true,
@@ -832,6 +834,7 @@ export default function EmpleadosPage() {
     clienteAlmacen: "Cliente Almacén",
     almacenClosing: "Cierre de Almacén",
     almacenInvoiceHistory: "Historial Almacén",
+    warehouseReports: "Solo Reporte de Almacén",
     wholesaleSales: "Acceso a Ventas por Mayor",
     wholesaleDiscounts: "Descuentos en Ventas por Mayor",
     turnReport: "Informe de Cierre de Turno",
@@ -1067,6 +1070,8 @@ export default function EmpleadosPage() {
                                   permissions: {
                                     ...formData.permissions,
                                     [key]: checked === true,
+                                    ...(key === "warehouseReports" && checked === true ? { reports: false } : {}),
+                                    ...(key === "reports" && checked === true ? { warehouseReports: false } : {}),
                                   },
                                 })
                               }
@@ -1782,6 +1787,8 @@ export default function EmpleadosPage() {
                             permissions: {
                               ...formData.permissions,
                               [key]: checked === true,
+                              ...(key === "warehouseReports" && checked === true ? { reports: false } : {}),
+                              ...(key === "reports" && checked === true ? { warehouseReports: false } : {}),
                             },
                           })
                         }

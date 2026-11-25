@@ -149,7 +149,7 @@ const getSaleInvoiceName = (sale: Pick<Sale, "items">) => {
 }
 
 export default function AlmacenPage() {
-  const { products, sales, suppliers, addProduct, updateProduct, deleteProduct, setOnDialogOpen, employees, currentUser } = useStore()
+  const { products, sales, suppliers, addProduct, updateProduct, deleteProduct, loadMoreProducts, setOnDialogOpen, employees, currentUser } = useStore()
   const { toast } = useToast()
 
   const [searchTerm, setSearchTerm] = useState("")
@@ -165,6 +165,8 @@ export default function AlmacenPage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [pdfReportType, setPdfReportType] = useState<"low" | "stop" | "total">("low")
   const [formData, setFormData] = useState<FormState>(INITIAL_FORM)
+  const [isLoadingMoreProducts, setIsLoadingMoreProducts] = useState(false)
+  const [hasMoreProducts, setHasMoreProducts] = useState(true)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [selectedSharedImage, setSelectedSharedImage] = useState<Product | null>(null)
@@ -1367,6 +1369,28 @@ export default function AlmacenPage() {
           </div>
         </CardContent>
       </Card>
+
+      {hasMoreProducts && filteredProducts.length > 0 && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            disabled={isLoadingMoreProducts}
+            onClick={async () => {
+              setIsLoadingMoreProducts(true)
+              try {
+                const loaded = await loadMoreProducts("armacen")
+                if (loaded < 100) setHasMoreProducts(false)
+              } catch (error) {
+                toast({ title: "No se pudieron cargar más productos", variant: "destructive" })
+              } finally {
+                setIsLoadingMoreProducts(false)
+              }
+            }}
+          >
+            {isLoadingMoreProducts ? "Cargando…" : "Cargar 100 productos más"}
+          </Button>
+        </div>
+      )}
 
       <Dialog
         open={!!historyProduct}

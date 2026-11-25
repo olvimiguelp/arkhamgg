@@ -261,6 +261,7 @@ export const MENU_ITEMS = [
     actionLabel: null,
     allowedRoles: ["admin", "employee"] as const,
     permissionKey: "reports" as keyof Employee["permissions"],
+    permissionKeys: ["reports", "warehouseReports"] as const,
   },
   {
     id: "cash-closing",

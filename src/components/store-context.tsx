@@ -402,6 +402,7 @@ export interface Employee {
     clienteAlmacen: boolean
     almacenClosing: boolean
     almacenInvoiceHistory: boolean
+    warehouseReports: boolean
     wholesaleSales: boolean
     wholesaleDiscounts: boolean
     turnReport: boolean
@@ -694,6 +695,7 @@ const normalizeEmployeePermissions = (permissions: any): Employee["permissions"]
   clienteAlmacen: coercePermissionFlag(permissions?.clienteAlmacen, false),
   almacenClosing: coercePermissionFlag(permissions?.almacenClosing, false),
   almacenInvoiceHistory: coercePermissionFlag(permissions?.almacenInvoiceHistory, false),
+  warehouseReports: coercePermissionFlag(permissions?.warehouseReports, false),
   wholesaleSales: coercePermissionFlag(permissions?.wholesaleSales, false),
   wholesaleDiscounts: coercePermissionFlag(permissions?.wholesaleDiscounts, false),
   turnReport: coercePermissionFlag(permissions?.turnReport, false),
@@ -974,6 +976,8 @@ interface StoreContextType {
   searchProducts: (search: string) => Promise<Product[]>
   loadMoreProducts: (source?: "products" | "armacen") => Promise<number>
   sales: Sale[]
+  loadMoreSales: () => Promise<number>
+  loadMorePayments: () => Promise<number>
   suppliers: Supplier[]
   customers: Customer[]
   customersLoadError: string | null
@@ -1072,13 +1076,17 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined)
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation()
   const isSalesRoute = pathname === "/ventas" || pathname === "/ventas-por-mayor"
+  const isPagedInventoryRoute = pathname === "/almacen"
+  const isPagedInvoiceHistoryRoute = pathname === "/historial-facturas" || pathname === "/historial-facturas-almacen" || isPagedInventoryRoute
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS)
   const [sales, setSales] = useState<Sale[]>([])
+  const salesLoadedRef = useRef(0)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [customersLoadError, setCustomersLoadError] = useState<string | null>(null)
   const customerRequest = useRef(0)
   const [payments, setPayments] = useState<Payment[]>([])
+  const paymentsLoadedRef = useRef(0)
   const [paymentAllocations, setPaymentAllocations] = useState<PaymentAllocationRecord[]>([])
   const [repairs, setRepairs] = useState<Repair[]>(INITIAL_REPAIRS)
   const [repairHistory, setRepairHistory] = useState<RepairHistory[]>([])
@@ -1423,15 +1431,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const fetchSales = useCallback(async () => {
     if (!currentUser) {
       setSales([])
+      salesLoadedRef.current = 0
       return
     }
     if (isTableMissing("sales")) return
 
     const supabase = createClient()
     console.log("[v0] Fetching sales...")
-    const { data, error } = await withTenantFilter(supabase.from("sales").select("*")).order("created_at", {
-      ascending: false,
-    })
+    let salesQuery = withTenantFilter(supabase.from("sales").select("*"))
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+    if (isPagedInvoiceHistoryRoute) salesQuery = salesQuery.range(0, 99)
+    const { data, error } = await salesQuery
 
     if (error) {
       markMissingTable("sales")
@@ -1443,9 +1454,25 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       console.log("[v0] Sales fetched:", data.length)
       const formattedSales: Sale[] = data.map(mapSaleFromDB)
+      salesLoadedRef.current = formattedSales.length
       setSales(formattedSales)
     }
-  }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
+  }, [currentUser?.id, isPagedInvoiceHistoryRoute, isTableMissing, markMissingTable, withTenantFilter])
+
+  const loadMoreSales = useCallback(async () => {
+    if (!currentUser || !isPagedInvoiceHistoryRoute) return 0
+    const supabase = createClient()
+    const from = salesLoadedRef.current
+    const { data, error } = await withTenantFilter(supabase.from("sales").select("*"))
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + 99)
+    if (error) throw error
+    const newSales = (data ?? []).map(mapSaleFromDB)
+    salesLoadedRef.current += newSales.length
+    if (newSales.length) setSales((current) => [...current, ...newSales])
+    return newSales.length
+  }, [currentUser, isPagedInvoiceHistoryRoute, withTenantFilter])
 
   const fetchReturns = useCallback(async () => {
     if (!currentUser) {
@@ -1477,15 +1504,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const fetchPayments = useCallback(async () => {
     if (!currentUser) {
       setPayments([])
+      paymentsLoadedRef.current = 0
       return
     }
     if (isTableMissing("payments")) return
 
     const supabase = createClient()
     console.log("[v0] Fetching payments...")
-    const { data, error } = await withTenantFilter(
+    let paymentsQuery = withTenantFilter(
       supabase.from("payments").select("*"),
-    ).order("date", { ascending: false })
+    ).order("date", { ascending: false }).order("id", { ascending: false })
+    if (isPagedInvoiceHistoryRoute) paymentsQuery = paymentsQuery.range(0, 99)
+    const { data, error } = await paymentsQuery
 
     if (error) {
       markMissingTable("payments")
@@ -1497,9 +1527,25 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (data) {
       console.log("[v0] Payments fetched:", data.length)
       const formattedPayments: Payment[] = data.map(mapPaymentFromDB)
+      paymentsLoadedRef.current = formattedPayments.length
       setPayments(formattedPayments)
     }
-  }, [currentUser?.id, isTableMissing, markMissingTable, withTenantFilter])
+  }, [currentUser?.id, isPagedInvoiceHistoryRoute, isTableMissing, markMissingTable, withTenantFilter])
+
+  const loadMorePayments = useCallback(async () => {
+    if (!currentUser || !isPagedInvoiceHistoryRoute) return 0
+    const supabase = createClient()
+    const from = paymentsLoadedRef.current
+    const { data, error } = await withTenantFilter(supabase.from("payments").select("*"))
+      .order("date", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, from + 99)
+    if (error) throw error
+    const newPayments = (data ?? []).map(mapPaymentFromDB)
+    paymentsLoadedRef.current += newPayments.length
+    if (newPayments.length) setPayments((current) => [...current, ...newPayments])
+    return newPayments.length
+  }, [currentUser, isPagedInvoiceHistoryRoute, withTenantFilter])
 
   const fetchPaymentAllocations = useCallback(async () => {
     if (!currentUser) {
@@ -1543,6 +1589,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           .order("id", { ascending: false })
         return isSalesRoute
           ? query().limit(SALES_INITIAL_PRODUCT_LIMIT)
+          : isPagedInventoryRoute
+            ? query().range(0, 99)
           : fetchAllRows<any>((from, to) => query().range(from, to))
       }
       const { data, error } = await readInventory("products")
@@ -1583,10 +1631,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         console.warn("[v0] Could not fetch products:", error)
       }
     }
-  }, [currentUser?.id, isSalesRoute, isTableMissing, markMissingTable, withTenantFilter])
+  }, [currentUser?.id, isSalesRoute, isPagedInventoryRoute, isTableMissing, markMissingTable, withTenantFilter])
 
   const loadMoreProducts = useCallback(async (source: "products" | "armacen" = "products") => {
-    if (!currentUser || !isSalesRoute) return 0
+    if (!currentUser || (!isSalesRoute && !isPagedInventoryRoute)) return 0
 
     const supabase = createClient()
     const nextProductsQuery = source === "products" ? withTenantFilter(
@@ -1595,7 +1643,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         .select("*")
         .order("created_at", { ascending: false })
         .order("id", { ascending: false })
-        .range(productsLoadedRef.current, productsLoadedRef.current + 24),
+        .range(productsLoadedRef.current, productsLoadedRef.current + (isPagedInventoryRoute ? 99 : 24)),
     ) : null
     const nextAlmacenQuery = source === "armacen" && !isTableMissing("armacen")
       ? withTenantFilter(
@@ -1604,7 +1652,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             .select("*")
             .order("created_at", { ascending: false })
             .order("id", { ascending: false })
-            .range(almacenProductsLoadedRef.current, almacenProductsLoadedRef.current + 24),
+            .range(almacenProductsLoadedRef.current, almacenProductsLoadedRef.current + (isPagedInventoryRoute ? 99 : 24)),
         )
       : null
 
@@ -1622,7 +1670,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       setProducts((current) => [...current, ...mergeInventoryProducts(newProducts, newAlmacenProducts)])
     }
     return loadedCount
-  }, [currentUser, isSalesRoute, isTableMissing, withTenantFilter])
+  }, [currentUser, isSalesRoute, isPagedInventoryRoute, isTableMissing, withTenantFilter])
 
   const searchProducts = useCallback(async (search: string) => {
     const normalizedSearch = search.trim()
@@ -3522,7 +3570,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             credit_amount: creditAmount,
             payment_method: params.paymentMethod,
             status: "credito",
-            notes: "Generado desde /cliente-almacen",
+            notes: sale.items
+              .map((item) => item.name?.trim())
+              .filter(Boolean)
+              .join(", ") || "Factura de almacén",
           }),
         )
 
@@ -6438,6 +6489,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         searchProducts,
         loadMoreProducts,
         sales,
+        loadMoreSales,
+        loadMorePayments,
         suppliers,
         customers,
         customersLoadError,

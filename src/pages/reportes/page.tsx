@@ -10,6 +10,7 @@ import { isAlmacenSourceRecord, normalizeInventorySourceTable, sameSaleItemSourc
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   Printer,
   TrendingUp,
@@ -22,6 +23,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   ShoppingBag,
+  Eye,
 } from "lucide-react"
 import {
   BarChart,
@@ -43,6 +45,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 export default function ReportsPage() {
   // Include expenses for net profit calculation
   const { sales, repairs, products, returns, expenses, payments, paymentAllocations, customers, currentUser, employees } = useStore()
+  const [selectedSaleDetail, setSelectedSaleDetail] = useState<{
+    sale: (typeof sales)[number]
+    items: (typeof sales)[number]["items"]
+    total: number
+    cost: number
+  } | null>(null)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString())
   const [reportType, setReportType] = useState("monthly")
   const [selectedPeriod, setSelectedPeriod] = useState(new Date().getMonth().toString())
@@ -51,6 +59,9 @@ export default function ReportsPage() {
   const [selectedDateDay, setSelectedDateDay] = useState(new Date().getDate().toString())
   const [chartType, setChartType] = useState<"bar" | "line" | "area">("bar")
   const [showOnlyAlmacen, setShowOnlyAlmacen] = useState(false)
+  const reportPermissions = employees.find((employee) => employee.id === currentUser?.id || employee.email === currentUser?.email)?.permissions ?? currentUser?.permissions
+  const warehouseReportOnly = Boolean(reportPermissions?.warehouseReports && !reportPermissions.reports)
+  const reportWarehouseOnly = showOnlyAlmacen || warehouseReportOnly
   const canViewReportSection = (menuItemId: string) => {
     const menuItem = MENU_ITEMS.find((item) => item.id === menuItemId)
     return menuItem ? tenantCanAccessMenuItem(currentUser, employees, menuItem) : false
@@ -120,7 +131,7 @@ export default function ReportsPage() {
       isAlmacenSourceRecord(item as Record<string, unknown>, almacenProductIds)
 
     const resolveSaleItems = (sale: (typeof sales)[number]) =>
-      showOnlyAlmacen ? sale.items.filter((item) => isAlmacenSaleItem(item)) : sale.items
+      reportWarehouseOnly ? sale.items.filter((item) => isAlmacenSaleItem(item)) : sale.items
 
     const resolveSalePaidAmount = (sale: (typeof sales)[number]) => {
       const total = Math.max(0, Number(sale.total) || 0)
@@ -144,7 +155,7 @@ export default function ReportsPage() {
       const itemsTotal = items.reduce((acc, item) => acc + (item.customPrice ?? item.sellPrice) * item.quantity, 0)
       const saleTotal = Math.max(0, Number(sale.total) || 0)
       const isNewCostAccountingSale = sale.items.some((item) => item.accountingVersion === 2)
-      if (showOnlyAlmacen) {
+      if (reportWarehouseOnly) {
         const paidRatio = saleTotal > 0 ? resolveSalePaidAmount(sale) / saleTotal : 0
         return itemsTotal * paidRatio
       }
@@ -163,10 +174,25 @@ export default function ReportsPage() {
     }
 
     const resolveReturnItems = (returnRecord: (typeof returns)[number]) =>
-      showOnlyAlmacen ? returnRecord.items.filter((item) => isAlmacenSourceRecord(item as Record<string, unknown>, almacenProductIds)) : returnRecord.items
+      reportWarehouseOnly ? returnRecord.items.filter((item) => isAlmacenSourceRecord(item as Record<string, unknown>, almacenProductIds)) : returnRecord.items
 
-    const resolveReturnTotal = (returnRecord: (typeof returns)[number], items: (typeof returns)[number]["items"]) =>
-      showOnlyAlmacen ? items.reduce((acc, item) => acc + (Number(item.subtotal) || 0), 0) : Number(returnRecord.total) || 0
+    const resolveReturnTotal = (
+      returnRecord: (typeof returns)[number],
+      sale: (typeof sales)[number] | undefined,
+      items: (typeof returns)[number]["items"],
+    ) => {
+      const returnAmount = reportWarehouseOnly
+        ? items.reduce((acc, item) => acc + (Number(item.subtotal) || 0), 0)
+        : Number(returnRecord.total) || 0
+
+      // Los ingresos del reporte se reconocen cuando entra el dinero. Una
+      // devolución de una factura a crédito no puede restar el total de la
+      // factura si ese dinero todavía no se había cobrado.
+      if (!sale) return returnAmount
+      const saleTotal = Math.max(0, Number(sale.total) || 0)
+      if (saleTotal <= 0) return 0
+      return returnAmount * (resolveSalePaidAmount(sale) / saleTotal)
+    }
 
     const resolveReturnCostReversal = (
       returnRecord: (typeof returns)[number],
@@ -202,7 +228,7 @@ export default function ReportsPage() {
             cost: resolveSaleCost(items),
           }
         })
-        .filter((row) => !showOnlyAlmacen || row.items.length > 0)
+        .filter((row) => !reportWarehouseOnly || row.items.length > 0)
 
     const buildReturnRows = (baseReturns: typeof returns): ReportReturnRow[] =>
       baseReturns
@@ -213,11 +239,11 @@ export default function ReportsPage() {
             returnRecord,
             sale,
             items,
-            total: resolveReturnTotal(returnRecord, items),
+            total: resolveReturnTotal(returnRecord, sale, items),
             costReversal: resolveReturnCostReversal(returnRecord, sale, items),
           }
         })
-        .filter((row) => !showOnlyAlmacen || row.items.length > 0)
+        .filter((row) => !reportWarehouseOnly || row.items.length > 0)
 
     const yearSales = sales.filter(
       (s) => new Date(s.date).getFullYear().toString() === selectedYear && s.status !== "pending",
@@ -228,16 +254,20 @@ export default function ReportsPage() {
     )
     // Expenses for the selected year
     const yearExpenses = expenses.filter((e) => new Date(e.date).getFullYear().toString() === selectedYear)
+    // `expenses` is a shared table without a warehouse/general ownership field.
+    // Keep these expenses in the general report only; otherwise unrelated
+    // expenses make the warehouse-only net profit negative when it has no sales.
+    const reportExpenses = reportWarehouseOnly ? [] : yearExpenses
     const yearDebtPayments = payments.filter(
       (payment) =>
         payment.paymentKind === "debt_payment" &&
         Number(payment.amount || 0) > 0 &&
-        payment.customerType === (showOnlyAlmacen ? "almacen" : "general") &&
+        payment.customerType === (reportWarehouseOnly ? "almacen" : "general") &&
         new Date(payment.date).getFullYear().toString() === selectedYear,
     )
     const isSpecialExpense = (expense: (typeof expenses)[number]) => expense.category === "gasto_especial"
-    const specialExpenseTotal = yearExpenses
-      .filter(isSpecialExpense)
+    const specialExpenses = reportExpenses.filter(isSpecialExpense)
+    const specialExpenseTotal = specialExpenses
       .reduce((acc, expense) => acc + Number(expense.amount || 0), 0)
     const monthlySpecialExpense = specialExpenseTotal / 12
 
@@ -253,13 +283,13 @@ export default function ReportsPage() {
     if (reportType === "monthly") {
       filteredSales = buildSalesRows(yearSales.filter((s) => new Date(s.date).getMonth().toString() === selectedPeriod))
       filteredReturns = buildReturnRows(yearReturns.filter((r) => new Date(r.date).getMonth().toString() === selectedPeriod))
-      filteredRepairs = showOnlyAlmacen
+      filteredRepairs = reportWarehouseOnly
         ? []
         : yearRepairs.filter((r) => new Date(r.date).getMonth().toString() === selectedPeriod)
       filteredDebtPayments = yearDebtPayments.filter((payment) => new Date(payment.date).getMonth().toString() === selectedPeriod)
 
       // Filter expenses by month for monthly report
-      filteredExpenses = yearExpenses.filter(
+      filteredExpenses = reportExpenses.filter(
         (e) => !isSpecialExpense(e) && new Date(e.date).getMonth().toString() === selectedPeriod,
       )
 
@@ -289,10 +319,10 @@ export default function ReportsPage() {
     } else if (reportType === "annual") {
       filteredSales = buildSalesRows(yearSales)
       filteredReturns = buildReturnRows(yearReturns)
-      filteredRepairs = showOnlyAlmacen ? [] : yearRepairs
+      filteredRepairs = reportWarehouseOnly ? [] : yearRepairs
       filteredDebtPayments = yearDebtPayments
       // All expenses for the year
-      filteredExpenses = yearExpenses.filter((e) => !isSpecialExpense(e))
+      filteredExpenses = reportExpenses.filter((e) => !isSpecialExpense(e))
 
       for (let i = 0; i < 12; i++) {
         const monthSales = filteredSales.filter(({ sale }) => new Date(sale.date).getMonth() === i)
@@ -334,7 +364,7 @@ export default function ReportsPage() {
           return m >= quarterStart && m < quarterEnd
         }),
       )
-      filteredRepairs = showOnlyAlmacen
+      filteredRepairs = reportWarehouseOnly
         ? []
         : yearRepairs.filter((r) => {
           const m = new Date(r.date).getMonth()
@@ -346,7 +376,7 @@ export default function ReportsPage() {
       })
 
       // Filter expenses for the same quarter
-      filteredExpenses = yearExpenses.filter((e) => {
+      filteredExpenses = reportExpenses.filter((e) => {
         const m = new Date(e.date).getMonth()
         return !isSpecialExpense(e) && m >= quarterStart && m < quarterEnd
       })
@@ -391,7 +421,7 @@ export default function ReportsPage() {
           return m >= semesterStart && m < semesterEnd
         }),
       )
-      filteredRepairs = showOnlyAlmacen
+      filteredRepairs = reportWarehouseOnly
         ? []
         : yearRepairs.filter((r) => {
           const m = new Date(r.date).getMonth()
@@ -403,7 +433,7 @@ export default function ReportsPage() {
       })
 
       // Filter expenses for the same semester
-      filteredExpenses = yearExpenses.filter((e) => {
+      filteredExpenses = reportExpenses.filter((e) => {
         const m = new Date(e.date).getMonth()
         return !isSpecialExpense(e) && m >= semesterStart && m < semesterEnd
       })
@@ -448,7 +478,7 @@ export default function ReportsPage() {
           return returnDate === selectedDateStr
         }),
       )
-      filteredRepairs = showOnlyAlmacen
+      filteredRepairs = reportWarehouseOnly
         ? []
         : yearRepairs.filter((r) => {
           const repairDate = new Date(r.date).toISOString().split('T')[0]
@@ -457,10 +487,13 @@ export default function ReportsPage() {
       filteredDebtPayments = yearDebtPayments.filter((payment) => new Date(payment.date).toISOString().split("T")[0] === selectedDateStr)
 
       // Filter expenses for the selected day
-      filteredExpenses = yearExpenses.filter((e) => {
+      filteredExpenses = reportExpenses.filter((e) => {
         const expenseDate = new Date(e.date).toISOString().split('T')[0]
         return !isSpecialExpense(e) && expenseDate === selectedDateStr
       })
+      const selectedDaySpecialExpenses = specialExpenses.filter(
+        (expense) => new Date(expense.date).toISOString().split("T")[0] === selectedDateStr,
+      )
 
       // Para el reporte diario, agrupar por hora
       const hourlyData: { [hour: number]: { income: number; costs: number; count: number } } = {}
@@ -493,6 +526,11 @@ export default function ReportsPage() {
       filteredDebtPayments.forEach((payment) => {
         const paymentHour = new Date(payment.date).getHours()
         hourlyData[paymentHour].income += Number(payment.amount || 0)
+      })
+
+      selectedDaySpecialExpenses.forEach((expense) => {
+        const expenseHour = new Date(expense.date).getHours()
+        hourlyData[expenseHour].costs += Number(expense.amount || 0)
       })
 
       // Crear datos para el gráfico
@@ -533,8 +571,15 @@ export default function ReportsPage() {
       filteredReturns.reduce((acc, row) => acc + row.costReversal, 0)
     // Total expenses for the selected period (do not affect summary.costs)
     const regularExpenses = filteredExpenses.reduce((acc, e) => acc + Number(e.amount || 0), 0)
+    const dailySpecialExpense = reportType === "daily"
+      ? specialExpenses
+          .filter((expense) => new Date(expense.date).toISOString().split("T")[0] === selectedDate)
+          .reduce((acc, expense) => acc + Number(expense.amount || 0), 0)
+      : 0
     const specialExpenseAllocation =
-      reportType === "annual"
+      reportType === "daily"
+        ? dailySpecialExpense
+        : reportType === "annual"
         ? specialExpenseTotal
         : reportType === "quarterly"
           ? monthlySpecialExpense * 3
@@ -575,7 +620,7 @@ export default function ReportsPage() {
       wholesaleCosts,
       wholesaleProfit,
     }
-  }, [sales, returns, repairs, expenses, payments, paymentAllocations, selectedYear, reportType, selectedPeriod, selectedDate, showOnlyAlmacen, almacenProductIds])
+  }, [sales, returns, repairs, expenses, payments, paymentAllocations, selectedYear, reportType, selectedPeriod, selectedDate, reportWarehouseOnly, almacenProductIds])
 
   const handlePrint = () => {
     window.print()
@@ -588,7 +633,7 @@ export default function ReportsPage() {
     const summaryData = [
       ["Reporte Financiero", `Año: ${selectedYear}`, `Periodo: ${reportType}`],
       [""],
-      ["Filtro", showOnlyAlmacen ? "Solo productos de almacen" : "Todos los productos"],
+      ["Filtro", reportWarehouseOnly ? "Solo productos de almacen" : "Todos los productos"],
       [""],
       ["Concepto", "Monto"],
       ["Ingresos Totales", reportData.summary.income],
@@ -639,7 +684,7 @@ export default function ReportsPage() {
 
     XLSX.writeFile(
       wb,
-      `Reporte_Financiero_${selectedYear}_${reportType}${showOnlyAlmacen ? "_solo_almacen" : ""}.xlsx`,
+      `Reporte_Financiero_${selectedYear}_${reportType}${reportWarehouseOnly ? "_solo_almacen" : ""}.xlsx`,
     )
   }
 
@@ -783,13 +828,13 @@ export default function ReportsPage() {
               <FileSpreadsheet className="h-4 w-4" />
               Exportar Excel
             </Button>
-            <Button
+            {!warehouseReportOnly && <Button
               onClick={() => setShowOnlyAlmacen((prev) => !prev)}
               variant={showOnlyAlmacen ? "default" : "outline"}
               className={showOnlyAlmacen ? "gap-2" : "gap-2 bg-transparent"}
             >
               {showOnlyAlmacen ? "Solo almacen: activo" : "Solo almacen"}
-            </Button>
+            </Button>}
           </div>
         </div>
 
@@ -1102,10 +1147,10 @@ export default function ReportsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Fecha</TableHead>
-                      <TableHead>Factura</TableHead>
+                      <TableHead>Productos vendidos</TableHead>
                       <TableHead>Cliente</TableHead>
-                          <TableHead>Items</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Detalle</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1120,11 +1165,19 @@ export default function ReportsPage() {
                         {reportData.filteredSales.map((row) => (
                           <TableRow key={`sale-${row.sale.id}`}>
                             <TableCell>{new Date(row.sale.date).toLocaleDateString()}</TableCell>
-                            <TableCell className="font-mono text-sm">{row.sale.invoiceNumber}</TableCell>
+                            <TableCell className="max-w-[320px] whitespace-normal">
+                              {row.items.length > 0 ? row.items.map((item, index) => (
+                                <div key={`${item.cartId}-${index}`}>{item.name} × {item.quantity}</div>
+                              )) : "Sin detalle de productos"}
+                            </TableCell>
                             <TableCell>{row.sale.customerName || "Cliente General"}</TableCell>
-                            <TableCell>{row.items.length} productos</TableCell>
                             <TableCell className="text-right font-bold text-emerald-600">
                               ${formatCurrency(row.total)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="icon" title="Ver detalle de la venta" onClick={() => setSelectedSaleDetail(row)}>
+                                <Eye className="h-4 w-4 text-blue-600" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -1135,12 +1188,12 @@ export default function ReportsPage() {
                           return (
                             <TableRow key={`payment-${payment.id}`} className="bg-emerald-50/50 dark:bg-emerald-950/20">
                               <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
-                              <TableCell className="font-mono text-sm">{payment.invoiceNumber}</TableCell>
+                              <TableCell>Abono a factura {payment.invoiceNumber}</TableCell>
                               <TableCell>{paymentCustomerName}</TableCell>
-                              <TableCell>Pago recibido</TableCell>
                               <TableCell className="text-right font-bold text-emerald-600">
                                 ${formatCurrency(Number(payment.amount || 0))}
                               </TableCell>
+                              <TableCell />
                             </TableRow>
                           )
                         })}
@@ -1236,12 +1289,12 @@ export default function ReportsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Fecha</TableHead>
-                      <TableHead>Factura</TableHead>
+                      <TableHead>Productos vendidos</TableHead>
                       <TableHead>Cliente</TableHead>
-                      <TableHead className="text-center">Items</TableHead>
                       <TableHead className="text-right">Ingresos</TableHead>
                       <TableHead className="text-right">Costos</TableHead>
                       <TableHead className="text-right">Ganancia</TableHead>
+                      <TableHead className="text-right">Detalle</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1260,9 +1313,12 @@ export default function ReportsPage() {
                         return (
                           <TableRow key={row.sale.id} className="hover:bg-orange-50/50 dark:hover:bg-orange-900/10">
                             <TableCell>{new Date(row.sale.date).toLocaleDateString()}</TableCell>
-                            <TableCell className="font-mono text-sm">{row.sale.invoiceNumber}</TableCell>
+                            <TableCell className="max-w-[320px] whitespace-normal">
+                              {row.items.length > 0 ? row.items.map((item, index) => (
+                                <div key={`${item.cartId}-${index}`}>{item.name} × {item.quantity}</div>
+                              )) : "Sin detalle de productos"}
+                            </TableCell>
                             <TableCell>{row.sale.customerName || "Cliente General"}</TableCell>
-                            <TableCell className="text-center">{row.items.length} prod.</TableCell>
                             <TableCell className="text-right font-semibold text-emerald-600">
                               ${formatCurrency(row.total)}
                             </TableCell>
@@ -1272,13 +1328,18 @@ export default function ReportsPage() {
                             <TableCell className={`text-right font-bold ${rowProfit >= 0 ? "text-orange-600" : "text-red-600"}`}>
                               ${formatCurrency(rowProfit)}
                             </TableCell>
+                            <TableCell className="text-right">
+                              <Button variant="ghost" size="icon" title="Ver detalle de la venta" onClick={() => setSelectedSaleDetail(row)}>
+                                <Eye className="h-4 w-4 text-blue-600" />
+                              </Button>
+                            </TableCell>
                           </TableRow>
                         )
                       })
                     )}
                     {reportData.wholesaleSales.length > 1 && (
                       <TableRow className="border-t-2 bg-orange-50/50 dark:bg-orange-900/10 font-bold">
-                        <TableCell colSpan={4} className="text-right text-sm text-muted-foreground">
+                        <TableCell colSpan={3} className="text-right text-sm text-muted-foreground">
                           Totales ({reportData.wholesaleSales.length} ventas)
                         </TableCell>
                         <TableCell className="text-right text-emerald-600">
@@ -1290,6 +1351,7 @@ export default function ReportsPage() {
                         <TableCell className={`text-right ${reportData.wholesaleProfit >= 0 ? "text-orange-600" : "text-red-600"}`}>
                           ${formatCurrency(reportData.wholesaleProfit)}
                         </TableCell>
+                        <TableCell />
                       </TableRow>
                     )}
                   </TableBody>
@@ -1299,6 +1361,34 @@ export default function ReportsPage() {
           </TabsContent>}
         </Tabs>
       </div>
+      <Dialog open={!!selectedSaleDetail} onOpenChange={(open) => !open && setSelectedSaleDetail(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalle de la venta</DialogTitle>
+            <DialogDescription>
+              Factura {selectedSaleDetail?.sale.invoiceNumber || selectedSaleDetail?.sale.id} · {selectedSaleDetail ? new Date(selectedSaleDetail.sale.date).toLocaleString() : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedSaleDetail && <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-muted-foreground">Cliente:</span> {selectedSaleDetail.sale.customerName || "Cliente General"}</div>
+              <div><span className="text-muted-foreground">Pago:</span> {selectedSaleDetail.sale.paymentMethod}</div>
+              <div><span className="text-muted-foreground">Total factura:</span> ${formatCurrency(selectedSaleDetail.sale.total)}</div>
+              <div><span className="text-muted-foreground">Ingreso en este reporte:</span> ${formatCurrency(selectedSaleDetail.total)}</div>
+            </div>
+            <Table>
+              <TableHeader><TableRow><TableHead>Producto</TableHead><TableHead className="text-right">Cant.</TableHead><TableHead className="text-right">Precio</TableHead><TableHead className="text-right">Costo</TableHead></TableRow></TableHeader>
+              <TableBody>{selectedSaleDetail.items.map((item, index) => <TableRow key={`${item.cartId}-${index}`}>
+                <TableCell>{item.name}</TableCell>
+                <TableCell className="text-right">{item.quantity}</TableCell>
+                <TableCell className="text-right">${formatCurrency(item.customPrice ?? item.sellPrice)}</TableCell>
+                <TableCell className="text-right">${formatCurrency(item.buyPrice)}</TableCell>
+              </TableRow>)}</TableBody>
+            </Table>
+            <div className="text-right text-sm"><span className="text-muted-foreground">Costo total de productos:</span> ${formatCurrency(selectedSaleDetail.cost)}</div>
+          </div>}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

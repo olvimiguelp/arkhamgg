@@ -67,7 +67,7 @@ const getPaymentMethodLabel = (value?: string) => {
 }
 
 export default function HistorialFacturasAlmacenPage() {
-  const { sales, products, customers, deleteSale, currentUser } = useStore()
+  const { sales, products, customers, deleteSale, loadMoreSales, currentUser } = useStore()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedMonth, setSelectedMonth] = useState<string>("all")
@@ -76,6 +76,8 @@ export default function HistorialFacturasAlmacenPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [selectedTransaction, setSelectedTransaction] = useState<AlmacenTransaction | null>(null)
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMoreSales, setHasMoreSales] = useState(true)
 
   const almacenProductIds = useMemo(
     () =>
@@ -602,6 +604,23 @@ export default function HistorialFacturasAlmacenPage() {
         </CardContent>
       </Card>
 
+      {sales.length >= 100 && hasMoreSales && (
+        <div className="flex justify-center py-4">
+          <Button variant="outline" disabled={isLoadingMore} onClick={async () => {
+            setIsLoadingMore(true)
+            try {
+              const loaded = await loadMoreSales()
+              if (loaded < 100) setHasMoreSales(false)
+            } catch (error) {
+              toast({ title: "No se pudieron cargar más facturas", description: error instanceof Error ? error.message : undefined, variant: "destructive" })
+            } finally {
+              setIsLoadingMore(false)
+            }
+          }}>
+            {isLoadingMore ? "Cargando…" : "Cargar 100 facturas más"}
+          </Button>
+        </div>
+      )}
       <SaleDetailsDialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog} sale={selectedTransaction} />
     </div>
   )

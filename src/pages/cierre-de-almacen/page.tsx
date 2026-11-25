@@ -340,6 +340,7 @@ export default function AlmacenClosingPage() {
   const { products, sales, returns, payments, repairs, expenses, currentUser, employees, customers } = useStore()
   const { toast } = useToast()
   const supabase = createClient()
+  const tenantId = currentUser?.adminId || currentUser?.ownerAdminId || currentUser?.id || "__no_tenant__"
 
   const [selectedDate, setSelectedDate] = useState<string>(() => formatLocalDate(new Date()))
   const [showClosingDialog, setShowClosingDialog] = useState(false)
@@ -820,6 +821,7 @@ export default function AlmacenClosingPage() {
       const { data, error } = await supabase
         .from("almacen_payments")
         .select("*")
+        .eq("owner_admin_id", tenantId)
         .gte("date", start.toISOString())
         .lt("date", end.toISOString())
         .order("date", { ascending: false })
@@ -842,6 +844,7 @@ export default function AlmacenClosingPage() {
         ? await supabase
             .from("almacen_credit_sales")
             .select("id, customer_account_id, invoice_number, date")
+            .eq("owner_admin_id", tenantId)
             .in("customer_account_id", customerAccountIds)
             .lt("date", end.toISOString())
             .order("date", { ascending: false })
@@ -900,13 +903,14 @@ export default function AlmacenClosingPage() {
       console.error("Error loading almacen debt payments:", error)
       setAlmacenDebtPayments([])
     }
-  }, [selectedDate, supabase])
+  }, [selectedDate, supabase, tenantId])
 
   const loadAlmacenCustomerAccounts = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from("almacen_customer_accounts")
         .select("id, name, source_customer_id")
+        .eq("owner_admin_id", tenantId)
 
       if (error) {
         if (!isMissingTableError(error)) {
@@ -932,7 +936,7 @@ export default function AlmacenClosingPage() {
       console.error("Error loading almacen customer accounts:", error)
       setAlmacenCustomerNamesById({})
     }
-  }, [supabase])
+  }, [supabase, tenantId])
 
   const loadData = async () => {
     setIsLoading(true)
@@ -940,6 +944,7 @@ export default function AlmacenClosingPage() {
       const { data, error } = await supabase
         .from("almacen_closings")
         .select("*")
+        .eq("owner_admin_id", tenantId)
         .order("date", { ascending: false })
         .limit(30)
 
@@ -951,7 +956,10 @@ export default function AlmacenClosingPage() {
           .filter((product) => Boolean(normalizeAlmacenBoxNumber(product.boxNumber) || isAlmacenCategory(product.category)))
           .map((product) => String(product.id)),
       )
-      const { data: armacenIdsData, error: armacenIdsError } = await supabase.from("armacen").select("id")
+      const { data: armacenIdsData, error: armacenIdsError } = await supabase
+        .from("armacen")
+        .select("id")
+        .eq("owner_admin_id", tenantId)
       if (armacenIdsError) {
         if (!isMissingTableError(armacenIdsError)) {
           console.error("Error loading armacen ids:", armacenIdsError)
@@ -983,14 +991,16 @@ export default function AlmacenClosingPage() {
     ["almacen_closings", "almacen_payments", "almacen_customer_accounts"],
     () => {
       void loadData()
+      void loadAlmacenDebtPayments()
+      void loadAlmacenCustomerAccounts()
     },
-    { enabled: hasAccess, ownerAdminId: currentUser?.adminId ?? null },
+    { enabled: hasAccess, ownerAdminId: tenantId === "__no_tenant__" ? null : tenantId },
   )
 
   useEffect(() => {
     if (!hasAccess) return
     loadData()
-  }, [hasAccess]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasAccess, tenantId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!hasAccess) return
@@ -1144,6 +1154,7 @@ export default function AlmacenClosingPage() {
     const { data: paymentRows, error: paymentError } = await supabase
       .from("almacen_payments")
       .select("date, amount, payment_method")
+      .eq("owner_admin_id", tenantId)
       .gte("date", start.toISOString())
       .lt("date", end.toISOString())
 
@@ -1296,6 +1307,7 @@ export default function AlmacenClosingPage() {
     try {
       const closingNumber = generateAlmacenClosingNumber()
       const closingData = {
+        owner_admin_id: tenantId,
         closing_number: closingNumber,
         date: selectedDate,
         start_time: startTime.toISOString(),
