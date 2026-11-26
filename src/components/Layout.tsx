@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { Navigate, useNavigate, useLocation } from "react-router-dom";
 import { useStore } from "@/components/store-context";
 import { Sidebar, MENU_ITEMS } from "@/components/sidebar";
 import { getFirstAccessibleTenantPath, tenantCanAccessMenuItem } from "@/lib/tenant-permissions";
@@ -102,6 +102,17 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
 
   if (!isAuthenticated) {
     return null;
+  }
+
+  const normalizedPath =
+    pathname === "/queue"
+      ? "/cola-exclusiva"
+      : pathname === "/repairs" || pathname === "/cola"
+        ? "/reparaciones"
+        : pathname;
+  const currentMenuItem = MENU_ITEMS.find((item) => item.to === normalizedPath);
+  if (currentMenuItem && !tenantCanAccessMenuItem(currentUser, employees, currentMenuItem)) {
+    return <Navigate to={getFirstAccessibleTenantPath(currentUser, employees)} replace />;
   }
 
   return (

@@ -141,16 +141,18 @@ type AuthLikeUser = {
   id?: string
   email?: string
   role?: string
+  permissions?: Partial<Employee["permissions"]>
 }
 
 export function getTenantEmployeeRecord(
   currentUser: AuthLikeUser | null | undefined,
   employees: Employee[],
 ): Employee | undefined {
-  if (!currentUser?.email) return undefined
+  if (!currentUser) return undefined
+  const currentEmail = currentUser.email?.trim().toLowerCase()
   return employees.find(
     (employee) =>
-      employee.email === currentUser.email ||
+      (currentEmail && employee.email.trim().toLowerCase() === currentEmail) ||
       (currentUser.id && employee.id === currentUser.id),
   )
 }
@@ -177,11 +179,12 @@ export function tenantCanAccessMenuItem(
   }
 
   if (currentUser.role === "employee") {
-    if (!record) return allowedRoles.includes("employee")
     const permissionKeys = "permissionKeys" in item ? item.permissionKeys : undefined
+    const permissions = record?.permissions ?? currentUser.permissions
+    if (!permissions) return false
     return permissionKeys
-      ? permissionKeys.some((permissionKey) => record.permissions[permissionKey] === true)
-      : record.permissions[item.permissionKey] === true
+      ? permissionKeys.some((permissionKey) => permissions[permissionKey] === true)
+      : permissions[item.permissionKey] === true
   }
 
   return false
@@ -192,7 +195,16 @@ export function getFirstAccessibleTenantPath(
   employees: Employee[],
 ): string {
   if (currentUser?.role === "super_admin") return "/dashboard"
-  const match = MENU_ITEMS.find((item) => tenantCanAccessMenuItem(currentUser, employees, item))
+
+  // Algunas entradas de grupo comparten ruta con una página real (por ejemplo,
+  // el grupo Ventas y la página Ventas usan /ventas). Evalúa cada ruta una vez,
+  // usando su primera entrada, para no redirigir a una página que sigue bloqueada.
+  const visitedPaths = new Set<string>()
+  const match = MENU_ITEMS.find((item) => {
+    if (visitedPaths.has(item.to)) return false
+    visitedPaths.add(item.to)
+    return tenantCanAccessMenuItem(currentUser, employees, item)
+  })
   return match?.to ?? "/bloqueo"
 }
 

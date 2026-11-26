@@ -270,7 +270,7 @@ export const MENU_ITEMS = [
     to: "/cierre-de-caja",
     subtitle: "Cerrar caja y ver arqueos.",
     actionLabel: null,
-    allowedRoles: ["admin"] as const,
+    allowedRoles: ["admin", "employee"] as const,
     permissionKey: "cashClosing" as keyof Employee["permissions"],
   },
   {
