@@ -1,7 +1,6 @@
 const path = require("path")
 const dotenv = require("dotenv")
-const { Client, LocalAuth } = require("whatsapp-web.js")
-const qrcode = require("qrcode-terminal")
+const wppconnect = require("@wppconnect-team/wppconnect")
 const { createClient } = require("@supabase/supabase-js")
 const http = require("http")
 
@@ -16,7 +15,10 @@ const REMINDER_MESSAGE_TEMPLATE =
   process.env.REMINDER_MESSAGE_TEMPLATE ||
   DEFAULT_REMINDER_MESSAGE_TEMPLATE
 const REMINDER_POLL_SECONDS = Number.parseInt(process.env.REMINDER_POLL_SECONDS || "60", 10)
-const REMINDER_DELAY_MS = Number.parseInt(process.env.REMINDER_DELAY_MS || "1200", 10)
+const WHATSAPP_SEND_INTERVAL_MS = Number.parseInt(
+  process.env.WHATSAPP_SEND_INTERVAL_MS || String(4 * 60 * 1000),
+  10,
+)
 const MAX_SEND_ATTEMPTS = 2
 const SEND_RETRY_DELAY_MS = 1000
 const DRY_RUN = process.env.DRY_RUN === "true"
@@ -43,8 +45,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const runOnce = process.argv.includes("--once")
 let isRunning = false
+let client = null
 let isClientReady = false
-let isClientConnecting = true
+let isClientConnecting = false
 let isClientSyncing = false
 let loadingProgress = null
 let qrCode = null
@@ -52,6 +55,23 @@ let lastError = null
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+let whatsappSendQueue = Promise.resolve()
+let lastWhatsAppSendAt = 0
+
+function sendWhatsAppMessage(client, chatId, message) {
+  const send = whatsappSendQueue.then(async () => {
+    const remaining = WHATSAPP_SEND_INTERVAL_MS - (Date.now() - lastWhatsAppSendAt)
+    if (lastWhatsAppSendAt > 0 && remaining > 0) await sleep(remaining)
+    try {
+      return await client.sendText(chatId, message)
+    } finally {
+      lastWhatsAppSendAt = Date.now()
+    }
+  })
+  whatsappSendQueue = send.catch(() => {})
+  return send
 }
 
 function getZonedDateParts(date) {
@@ -175,18 +195,18 @@ async function sendToPhone(client, phone, message) {
 
   for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt += 1) {
     try {
-      const numberId = await client.getNumberId(normalized)
-      if (!numberId) {
+      const chatId = `${normalized}@c.us`
+      const numberStatus = await client.checkNumberStatus(chatId)
+      if (!numberStatus?.numberExists) {
         return { ok: false, reason: "not_on_whatsapp", normalized }
       }
 
-      const chatId = numberId._serialized || `${normalized}@c.us`
       if (DRY_RUN) {
         console.log("[DRY_RUN]", chatId, message)
         return { ok: true, attempts: attempt }
       }
 
-      await client.sendMessage(chatId, message)
+      await sendWhatsAppMessage(client, chatId, message)
       return { ok: true, attempts: attempt }
     } catch (error) {
       if (attempt === MAX_SEND_ATTEMPTS) {
@@ -239,9 +259,13 @@ async function processOnce(client) {
           } else if (result.reason === "send_failed") {
             console.warn("Skipped:", customer.id, result.reason, `after ${result.attempts} attempts`, result.error || "", "- continuing to next customer")
           } else {
-            console.warn("Skipped:", customer.id, result.reason, "- continuing to next customer")
+            console.warn(
+              "Skipped:",
+              customer.id,
+              result.reason,
+              "- add a phone number to this customer in ARKHAM before sending",
+            )
           }
-          if (REMINDER_DELAY_MS > 0) await sleep(REMINDER_DELAY_MS)
           continue
         }
 
@@ -249,12 +273,7 @@ async function processOnce(client) {
       } catch (error) {
         skippedCount += 1
         console.error("Send failed:", customer.id, error?.message || error, "- continuing to next customer")
-        if (REMINDER_DELAY_MS > 0) await sleep(REMINDER_DELAY_MS)
         continue
-      }
-
-      if (REMINDER_DELAY_MS > 0) {
-        await sleep(REMINDER_DELAY_MS)
       }
     }
 
@@ -275,110 +294,140 @@ async function processOnce(client) {
   }
 }
 
-function killOrphanedChromeProcesses() {
-  if (process.platform !== "win32") return
+let shuttingDown = false
+let reconnectTimer = null
+let reconnectAttempt = 0
+let clientGeneration = 0
+let reminderInterval = null
+
+function scheduleReconnect(reason, generation = clientGeneration) {
+  if (generation !== clientGeneration || reconnectTimer || shuttingDown || runOnce) return
+  isClientReady = false
+  isClientConnecting = false
+  isClientSyncing = false
+  loadingProgress = null
+  qrCode = null
+  lastError = reason || "connection lost"
+  const delay = Math.min(5000 * 2 ** reconnectAttempt++, 60000)
+  console.error(`WhatsApp reconnecting in ${Math.round(delay / 1000)}s:`, lastError)
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null
+    if (generation !== clientGeneration) return
+    clientGeneration += 1
+    const oldClient = client
+    client = null
+    if (oldClient) await oldClient.close().catch(() => {})
+    startWhatsAppClient()
+  }, delay)
+}
+
+async function startWhatsAppClient() {
+  if (client || isClientConnecting || shuttingDown) return
+  const generation = ++clientGeneration
+  isClientConnecting = true
+  isClientSyncing = false
+  lastError = null
   try {
-    const { execSync } = require("child_process")
-    const command = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = 'chrome.exe'\\" | Where-Object { $_.CommandLine -like '*wwebjs_auth*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`
-    execSync(command, { stdio: "ignore" })
-    console.log("Stale chrome processes killed")
+    client = await wppconnect.create({
+      session: "arkham-reminder-bot",
+      headless: true,
+      useChrome: true,
+      logQR: false,
+      updatesLog: false,
+      disableWelcome: true,
+      autoClose: 0,
+      deviceSyncTimeout: 0,
+      injectionTimeout: 120_000,
+      waitForLogin: false,
+      catchQR: (qrImage, asciiQR, attempt) => {
+        if (shuttingDown || generation !== clientGeneration) return
+        console.log("WhatsApp QR callback received:", Boolean(qrImage), qrImage?.length || 0, "attempt", attempt)
+        if (process.stdout.isTTY) {
+          console.log(`Scan QR to login (attempt ${attempt}):`)
+          console.log(asciiQR)
+        }
+        qrCode = qrImage
+        isClientConnecting = false
+        isClientSyncing = false
+        loadingProgress = null
+        lastError = null
+      },
+      statusFind: (status) => {
+        if (generation !== clientGeneration) return
+        console.log("WhatsApp session status:", status)
+        if (["qrReadSuccess", "isLogged", "inChat"].includes(status)) {
+          qrCode = null
+          isClientConnecting = false
+          isClientSyncing = true
+        } else if (["disconnectedMobile", "browserClose", "serverClose"].includes(status)) {
+          scheduleReconnect(status, generation)
+        }
+      },
+      onLoadingScreen: (percent, message) => {
+        if (generation !== clientGeneration) return
+        const parsedPercent = Number(percent)
+        if (Number.isFinite(parsedPercent)) loadingProgress = Math.min(100, Math.max(0, parsedPercent))
+        isClientConnecting = false
+        isClientSyncing = true
+        if (message) console.log("WhatsApp loading:", message)
+      },
+      folderNameToken: path.join(__dirname, ".wppconnect", "tokens"),
+      puppeteerOptions: {
+        headless: true,
+        protocolTimeout: 300_000,
+        userDataDir: path.join(__dirname, ".wppconnect", "session"),
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        ...(CHROME_EXECUTABLE_PATH ? { executablePath: CHROME_EXECUTABLE_PATH } : {}),
+      },
+    })
+    if (generation !== clientGeneration || shuttingDown) {
+      await client.close().catch(() => {})
+      client = null
+      return
+    }
+    client.onStateChange((state) => {
+      if (generation !== clientGeneration) return
+      console.log("WhatsApp connection state:", state)
+      if (isClientReady && state !== "CONNECTED") scheduleReconnect(state, generation)
+    })
+    isClientConnecting = false
+    isClientSyncing = true
+    client.waitForLogin().then(async () => {
+      if (shuttingDown || generation !== clientGeneration) return
+      console.log("WhatsApp client ready.")
+      reconnectAttempt = 0
+      isClientReady = true
+      isClientConnecting = false
+      isClientSyncing = false
+      loadingProgress = null
+      qrCode = null
+      lastError = null
+
+      await processOnce(client)
+      if (runOnce) {
+        shuttingDown = true
+        await client.close()
+        process.exit(0)
+      }
+      if (!reminderInterval) {
+        reminderInterval = setInterval(() => processOnce(client), REMINDER_POLL_SECONDS * 1000)
+      }
+    }).catch((error) => {
+      if (!shuttingDown && generation === clientGeneration) {
+        scheduleReconnect(error?.message || String(error), generation)
+      }
+    })
   } catch (error) {
-    console.error("Error killing stale chrome processes:", error)
+    if (generation !== clientGeneration) return
+    isClientConnecting = false
+    isClientSyncing = false
+    lastError = error?.message || String(error)
+    console.error("Initialization error:", lastError)
+    scheduleReconnect(lastError, generation)
   }
 }
 
-killOrphanedChromeProcesses()
-
-const client = new Client({
-  authStrategy: new LocalAuth({
-    clientId: "arkham-reminder-bot-v2",
-    dataPath: path.join(__dirname, ".wwebjs_auth"),
-  }),
-  authTimeoutMs: 60_000,
-  puppeteer: {
-    headless: true,
-    protocolTimeout: 300_000,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    ...(CHROME_EXECUTABLE_PATH ? { executablePath: CHROME_EXECUTABLE_PATH } : {}),
-  },
-})
-
-client.on("qr", (qr) => {
-  console.log("Scan QR to login:")
-  qrcode.generate(qr, { small: true })
-  qrCode = qr
-  isClientReady = false
-  isClientConnecting = false
-  isClientSyncing = false
-  loadingProgress = null
-  lastError = null
-})
-
-client.on("authenticated", () => {
-  isClientConnecting = false
-  isClientSyncing = true
-  loadingProgress = null
-  qrCode = null
-  lastError = null
-})
-
-client.on("loading_screen", (percent) => {
-  const parsedPercent = Number(percent)
-  if (!Number.isFinite(parsedPercent)) return
-  isClientConnecting = false
-  isClientSyncing = true
-  loadingProgress = Math.min(100, Math.max(0, parsedPercent))
-})
-
-client.on("ready", async () => {
-  console.log("WhatsApp client ready.")
-  isClientReady = true
-  isClientConnecting = false
-  isClientSyncing = false
-  loadingProgress = null
-  qrCode = null
-  lastError = null
-
-  await processOnce(client)
-
-  if (runOnce) {
-    await client.destroy()
-    process.exit(0)
-  }
-
-  setInterval(() => {
-    processOnce(client)
-  }, REMINDER_POLL_SECONDS * 1000)
-})
-
-client.on("auth_failure", (message) => {
-  console.error("Auth failure:", message)
-  isClientReady = false
-  isClientConnecting = false
-  isClientSyncing = false
-  loadingProgress = null
-  qrCode = null
-  lastError = message
-})
-
-client.on("disconnected", (reason) => {
-  console.error("Disconnected:", reason)
-  isClientReady = false
-  isClientConnecting = false
-  isClientSyncing = false
-  loadingProgress = null
-  qrCode = null
-  lastError = reason
-})
-
-client.initialize().catch((err) => {
-  console.error("Initialization error:", err)
-  isClientConnecting = false
-  isClientSyncing = false
-  loadingProgress = null
-  qrCode = null
-  lastError = err?.message || String(err)
-})
+startWhatsAppClient()
 
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {

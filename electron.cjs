@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain } = require("electron");
 const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const wppconnect = require("@wppconnect-team/wppconnect");
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -126,7 +126,7 @@ function createWindow() {
   if (isDev) {
     // Desarrollo: Carga la URL de Vite limpiando caché previamente para evitar ERR_CACHE_READ_FAILURE
     win.webContents.session.clearCache().finally(() => {
-      win.loadURL("http://localhost:8080");
+      win.loadURL(process.env.VITE_DEV_SERVER_URL || "http://localhost:3000");
       win.webContents.openDevTools();
     });
   } else {
@@ -157,8 +157,13 @@ let whatsappGeneration = 0;
 let appIsQuitting = false;
 const WHATSAPP_RECONNECT_BASE_MS = 5_000;
 const WHATSAPP_RECONNECT_MAX_MS = 60_000;
-const WHATSAPP_INITIALIZATION_TIMEOUT_MS = 90_000;
-const SEND_DELAY_MS = 2 * 60 * 1000;
+const WHATSAPP_INITIALIZATION_TIMEOUT_MS = 210_000;
+const WHATSAPP_SEND_INTERVAL_MS = Number.parseInt(
+  process.env.WHATSAPP_SEND_INTERVAL_MS || String(4 * 60 * 1000),
+  10,
+);
+let whatsappSendQueue = Promise.resolve();
+let lastWhatsAppSendAt = 0;
 const FALLBACK_REMINDER_MESSAGE_TEMPLATE =
   "Hola {{name}}, buenos días.\n\nLe escribimos de 049Movil para informarle que tiene una deuda pendiente de {{debt}} con nosotros. Le solicitamos que pase por una de nuestras sucursales para saldarla o realizar un abono.\n\nGracias por su atención.";
 
@@ -262,97 +267,98 @@ function initWhatsAppClient() {
     console.log(`[whatsapp] Using browser: ${chromeExecutablePath}`);
   }
 
-  whatsappClient = new Client({
-    authStrategy: new LocalAuth({ dataPath: authPath }),
-    authTimeoutMs: 60_000,
-    puppeteer: {
-      headless: "new",
+  const clientOptions = {
+    session: "arkham-whatsapp",
+    headless: true,
+    useChrome: true,
+    logQR: false,
+    updatesLog: false,
+    disableWelcome: true,
+    autoClose: 0,
+    deviceSyncTimeout: 0,
+    injectionTimeout: 120_000,
+    waitForLogin: false,
+    catchQR: (qrImage) => {
+      if (generation !== whatsappGeneration) return;
+      console.log("[whatsapp] QR callback received:", Boolean(qrImage), qrImage?.length || 0);
+      clearWhatsAppReconnect();
+      clearWhatsAppInitializationTimeout();
+      whatsappInitializing = false;
+      whatsappQr = qrImage;
+      whatsappReady = false;
+      whatsappSyncing = false;
+      whatsappProgress = null;
+      broadcastWhatsAppStatus();
+    },
+    statusFind: (status) => {
+      if (generation !== whatsappGeneration) return;
+      console.log("[whatsapp] Session status:", status);
+      if (["qrReadSuccess", "isLogged", "inChat"].includes(status)) {
+        whatsappQr = null;
+        whatsappInitializing = false;
+        whatsappSyncing = true;
+        broadcastWhatsAppStatus();
+      } else if (["disconnectedMobile", "browserClose", "serverClose"].includes(status)) {
+        scheduleWhatsAppReconnect(status);
+      }
+    },
+    onLoadingScreen: (percent) => {
+      if (generation !== whatsappGeneration) return;
+      const parsedPercent = Number(percent);
+      if (!Number.isFinite(parsedPercent)) return;
+      whatsappSyncing = true;
+      whatsappProgress = Math.min(100, Math.max(0, parsedPercent));
+      broadcastWhatsAppStatus();
+    },
+    folderNameToken: path.join(authPath, "tokens"),
+    puppeteerOptions: {
+      headless: true,
       protocolTimeout: 300_000,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--disable-extensions",
-        "--disable-popup-blocking",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--window-position=-32000,-32000",
-      ],
+      userDataDir: path.join(authPath, "session"),
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
       ...(chromeExecutablePath ? { executablePath: chromeExecutablePath } : {}),
     },
-  });
+  };
 
-  whatsappClient.on("qr", (qr) => {
-    if (generation !== whatsappGeneration) return;
-    clearWhatsAppReconnect();
-    clearWhatsAppInitializationTimeout();
-    whatsappInitializing = false;
-    whatsappQr = qr;
-    whatsappReady = false;
-    whatsappSyncing = false;
-    whatsappProgress = null;
-    broadcastWhatsAppStatus();
-  });
-
-  whatsappClient.on("authenticated", () => {
-    if (generation !== whatsappGeneration) return;
-    whatsappQr = null;
-    whatsappInitializing = false;
-    whatsappSyncing = true;
-    whatsappProgress = null;
-    broadcastWhatsAppStatus();
-  });
-
-  whatsappClient.on("loading_screen", (percent) => {
-    if (generation !== whatsappGeneration) return;
-    const parsedPercent = Number(percent);
-    if (!Number.isFinite(parsedPercent)) return;
-    whatsappSyncing = true;
-    whatsappProgress = Math.min(100, Math.max(0, parsedPercent));
-    broadcastWhatsAppStatus();
-  });
-
-  whatsappClient.on("ready", () => {
-    if (generation !== whatsappGeneration) return;
-    clearWhatsAppReconnect();
-    clearWhatsAppInitializationTimeout();
-    whatsappReconnectAttempt = 0;
-    whatsappInitializing = false;
-    whatsappReady = true;
-    whatsappQr = null;
-    whatsappSyncing = false;
-    whatsappProgress = null;
-    broadcastWhatsAppStatus();
-  });
-
-  whatsappClient.on("auth_failure", (message) => {
-    if (generation !== whatsappGeneration) return;
-    console.error("[whatsapp] Authentication failure:", message);
-    scheduleWhatsAppReconnect("authentication failure");
-  });
-
-  whatsappClient.on("disconnected", (reason) => {
-    if (generation !== whatsappGeneration) return;
-    console.warn("[whatsapp] Disconnected:", reason);
-    scheduleWhatsAppReconnect(reason);
-  });
-
-  whatsappClient
-    .initialize()
+  wppconnect.create(clientOptions)
+    .then((client) => {
+      if (generation !== whatsappGeneration || appIsQuitting) return client.close();
+      whatsappClient = client;
+      whatsappInitializing = false;
+      whatsappSyncing = true;
+      broadcastWhatsAppStatus();
+      client.onStateChange((state) => {
+        if (generation !== whatsappGeneration) return;
+        console.log("[whatsapp] Connection state:", state);
+        if (whatsappReady && state !== "CONNECTED") scheduleWhatsAppReconnect(state);
+      });
+      client.waitForLogin()
+        .then(() => {
+          if (generation !== whatsappGeneration) return;
+          clearWhatsAppReconnect();
+          clearWhatsAppInitializationTimeout();
+          whatsappReconnectAttempt = 0;
+          whatsappInitializing = false;
+          whatsappReady = true;
+          whatsappQr = null;
+          whatsappSyncing = false;
+          whatsappProgress = null;
+          broadcastWhatsAppStatus();
+        })
+        .catch((error) => {
+          if (generation !== whatsappGeneration || appIsQuitting) return;
+          console.error("[whatsapp] login wait error:", error);
+          scheduleWhatsAppReconnect(error?.message || String(error));
+        });
+    })
     .catch((error) => {
-      if (generation !== whatsappGeneration) return;
+      if (generation !== whatsappGeneration || appIsQuitting) return;
       console.error("[whatsapp] init error:", error);
       const errMsg = error?.message || String(error);
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("whatsapp:error", errMsg);
       });
       scheduleWhatsAppReconnect(errMsg);
-    })
-    .finally(() => {
-      if (generation === whatsappGeneration && (whatsappReady || whatsappQr)) {
-        clearWhatsAppInitializationTimeout();
-      }
     });
 }
 
@@ -362,7 +368,7 @@ async function resetWhatsAppClient() {
   whatsappGeneration += 1;
   if (whatsappClient) {
     try {
-      await whatsappClient.destroy();
+      await whatsappClient.close();
     } catch (error) {
       console.error("[whatsapp] destroy error:", error);
     }
@@ -413,6 +419,20 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sendWhatsAppMessage(client, chatId, message) {
+  const send = whatsappSendQueue.then(async () => {
+    const remaining = WHATSAPP_SEND_INTERVAL_MS - (Date.now() - lastWhatsAppSendAt);
+    if (lastWhatsAppSendAt > 0 && remaining > 0) await delay(remaining);
+    try {
+      return await client.sendText(chatId, message);
+    } finally {
+      lastWhatsAppSendAt = Date.now();
+    }
+  });
+  whatsappSendQueue = send.catch(() => {});
+  return send;
+}
+
 app.whenReady().then(() => {
   createWindow();
 
@@ -446,8 +466,9 @@ app.whenReady().then(() => {
         continue;
       }
 
-      const numberId = await whatsappClient.getNumberId(normalized);
-      if (!numberId) {
+      const chatId = `${normalized}@c.us`;
+      const numberStatus = await whatsappClient.checkNumberStatus(chatId);
+      if (!numberStatus?.numberExists) {
         results.push({
           id: customer.id,
           ok: false,
@@ -457,15 +478,11 @@ app.whenReady().then(() => {
         continue;
       }
 
-      let attemptedSend = false;
       try {
-        const chatId = numberId._serialized || `${normalized}@c.us`;
         const message = resolveMessage(customer);
-        attemptedSend = true;
-        await whatsappClient.sendMessage(chatId, message);
+        await sendWhatsAppMessage(whatsappClient, chatId, message);
         results.push({ id: customer.id, ok: true });
       } catch (error) {
-        attemptedSend = true;
         results.push({
           id: customer.id,
           ok: false,
@@ -474,9 +491,6 @@ app.whenReady().then(() => {
         });
       }
 
-      if (attemptedSend && index < customers.length - 1) {
-        await delay(SEND_DELAY_MS);
-      }
     }
 
     return { results };

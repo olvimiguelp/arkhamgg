@@ -9,8 +9,9 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
+    "@wppconnect-team/wppconnect": "2.4.0",
+    "@wppconnect/wa-js": "4.8.5",
     "dotenv": "^16.4.5",
-    "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.8"
+    "puppeteer-core": "^25.19.0"
   }
 }

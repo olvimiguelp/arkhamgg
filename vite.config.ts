@@ -15,7 +15,11 @@ export default defineConfig(({ mode }) => ({
     host: "0.0.0.0",
     port: 3000,
     watch: {
-      ignored: ["**/whatsapp-bot/.wwebjs_auth/**"],
+      ignored: [
+        "**/whatsapp-bot/.wwebjs_auth/**",
+        /[\\/]\.wppconnect(?:[\\/]|$)/i,
+        /[\\/]\.wppconnect-diagnostics(?:[\\/]|$)/i,
+      ],
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),

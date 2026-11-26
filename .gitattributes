@@ -1,0 +1,2 @@
+release-whatsapp-test/ARKHAM[[:space:]]Setup[[:space:]]1.0.63.exe filter=lfs diff=lfs merge=lfs -text
+release-whatsapp-test/win-unpacked/ARKHAM.exe filter=lfs diff=lfs merge=lfs -text

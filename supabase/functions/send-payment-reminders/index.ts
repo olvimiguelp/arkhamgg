@@ -59,8 +59,9 @@ const whatsappTemplateName = Deno.env.get("WHATSAPP_TEMPLATE_NAME") ?? ""
 const whatsappTemplateLang = Deno.env.get("WHATSAPP_TEMPLATE_LANG") ?? "es"
 const whatsappTemplateParamKeys = Deno.env.get("WHATSAPP_TEMPLATE_PARAM_KEYS") ?? "name,debt"
 const whatsappDefaultCountryCode = Deno.env.get("WHATSAPP_DEFAULT_COUNTRY_CODE") ?? ""
-const SEND_DELAY_MS = 2 * 60 * 1000
-const MANUAL_SEND_DELAY_MS = Number(Deno.env.get("MANUAL_SEND_DELAY_MS") ?? "0")
+const WHATSAPP_SEND_INTERVAL_MS = Number(
+  Deno.env.get("WHATSAPP_SEND_INTERVAL_MS") ?? String(4 * 60 * 1000),
+)
 const REMINDER_TIMEZONE = Deno.env.get("REMINDER_TIMEZONE") ?? "America/Santo_Domingo"
 const AUTO_SEND_HOUR = Number(Deno.env.get("REMINDER_AUTO_SEND_HOUR") ?? "10")
 const AUTO_SEND_MINUTE = Number(Deno.env.get("REMINDER_AUTO_SEND_MINUTE") ?? "30")
@@ -397,11 +398,8 @@ serve(async (req) => {
       results.push({ id: customer.id, ok: false, reason: "send_failed", error: result.error })
     }
 
-    if (index < sendable.length - 1) {
-      const delay = isManual ? MANUAL_SEND_DELAY_MS : SEND_DELAY_MS
-      if (delay > 0) {
-        await sleep(delay)
-      }
+    if (index < sendable.length - 1 && WHATSAPP_SEND_INTERVAL_MS > 0) {
+      await sleep(WHATSAPP_SEND_INTERVAL_MS)
     }
   }
 

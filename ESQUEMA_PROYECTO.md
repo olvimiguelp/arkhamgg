@@ -17,7 +17,7 @@
 | **Estado / Datos** | TanStack React Query, React Context |
 | **Backend (BaaS)** | Supabase (PostgreSQL + Auth + Storage + Realtime) |
 | **Desktop** | Electron (empaquetado con electron-builder → NSIS `.exe`) |
-| **Bot** | WhatsApp Web.js (whatsapp-web.js) |
+| **Bot** | WPPConnect (`@wppconnect-team/wppconnect`) |
 | **PDF / Impresión** | jsPDF + Electron `webContents.print()` |
 | **Validación** | React Hook Form + Zod (hookform/resolvers) |
 | **Íconos** | Lucide React |
@@ -265,7 +265,7 @@
 │       └── build-all-migrations.ps1      # Script de build
 │
 ├── 📁 whatsapp-bot/                      # 🤖 WHATSAPP BOT
-│   ├── index.js                          # Bot principal (whatsapp-web.js + LocalAuth)
+│   ├── index.js                          # Bot principal (WPPConnect)
 │   ├── package.json
 │   └── README.md
 │
@@ -437,7 +437,7 @@ Cada empleado tiene un objeto `permissions` en la BD con booleanos para cada mó
 - **Main process**: `electron.cjs`
   - Crea `BrowserWindow` con Vite dev server (puerto 8080) o archivos estáticos (`dist/`).
   - Impresión silenciosa de facturas vía `webContents.print()`.
-  - WhatsApp Bot integrado (`whatsapp-web.js` con `LocalAuth`).
+  - WhatsApp Bot integrado con WPPConnect y perfil Chromium persistente.
 - **Build**: `electron-builder` → instalador NSIS (`.exe`) para Windows.
 - **Auto-update**: Blockmaps generados para actualizaciones incrementales.
 
@@ -446,7 +446,7 @@ Cada empleado tiene un objeto `permissions` en la BD con booleanos para cada mó
 ## 🤖 WhatsApp Bot
 
 - Ubicación: `whatsapp-bot/index.js`
-- Librería: `whatsapp-web.js` con `LocalAuth` (sesión persistente).
+- Librería: `@wppconnect-team/wppconnect` (sesión persistente).
 - Se ejecuta con `npm run bot` o integrado en Electron.
 - Funcionalidad: recordatorios de pago, notificaciones a clientes.
 
@@ -498,7 +498,7 @@ Cada empleado tiene un objeto `permissions` en la BD con booleanos para cada mó
 | `cmdk` | Command palette |
 | `class-variance-authority` | Variantes de componentes |
 | `clsx` + `tailwind-merge` | Utilidad `cn()` para clases |
-| `whatsapp-web.js` + `qrcode-terminal` | WhatsApp Bot |
+| `@wppconnect-team/wppconnect` | WhatsApp Bot |
 | `electron` + `electron-builder` | Desktop app |
 | `concurrently` + `wait-on` | Electron dev workflow |
 | `lovable-tagger` | Plugin Vite para dev |

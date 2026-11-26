@@ -1,6 +1,6 @@
-# WhatsApp Reminder Bot (whatsapp-web.js)
+# WhatsApp Reminder Bot (WPPConnect)
 
-Este bot usa `whatsapp-web.js` para enviar recordatorios desde WhatsApp Web.
+Este bot usa `@wppconnect-team/wppconnect` para conectarse a WhatsApp Web y enviar recordatorios.
 Debe ejecutarse en una maquina siempre encendida (PC/VPS) porque mantiene una sesion activa.
 
 ## Quick start
@@ -13,7 +13,7 @@ Debe ejecutarse en una maquina siempre encendida (PC/VPS) porque mantiene una se
 - `npm run once`
 
 ## Notas
-- La sesion se guarda en `.wwebjs_auth` para evitar escanear QR cada vez.
+- La sesion se guarda en `.wppconnect` para evitar escanear QR cada vez.
 - Este bot consulta Supabase y envia recordatorios segun `reminder_enabled` y el intervalo.
 
 ## Nota de Chromium

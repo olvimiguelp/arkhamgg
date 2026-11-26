@@ -584,6 +584,10 @@ export default function CustomersPage() {
       setWhatsappQrDataUrl("")
       return
     }
+    if (whatsappStatus.qr.startsWith("data:image/")) {
+      setWhatsappQrDataUrl(whatsappStatus.qr)
+      return
+    }
     QRCode.toDataURL(whatsappStatus.qr)
       .then((url) => setWhatsappQrDataUrl(url))
       .catch((err) => console.error("QR error:", err))

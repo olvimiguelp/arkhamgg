@@ -5,6 +5,8 @@ release/
 *.asar
 **/.wwebjs_auth/
 **/.wwebjs_cache/
+**/.wppconnect/
+**/.wppconnect-diagnostics/
 catalogo-publico/.env
 catalogo-publico/.env.*
 !catalogo-publico/.env.example
