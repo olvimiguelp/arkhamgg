@@ -367,7 +367,7 @@ export default function AlmacenClosingPage() {
   const [selectedPayment, setSelectedPayment] = useState<AlmacenDebtPaymentRecord | null>(null)
 
   const isAdmin = currentUser?.role === "admin"
-  const effectiveEmployeeFilter = isAdmin ? selectedEmployeeId : currentUser?.id ?? "all"
+  const effectiveEmployeeFilter = selectedEmployeeId
 
   const employeeOptions = useMemo(
     () => employees
@@ -381,12 +381,6 @@ export default function AlmacenClosingPage() {
     const dayStr = currentDay.padStart(2, "0")
     setSelectedDate(`${currentYear}-${monthStr}-${dayStr}`)
   }, [currentDay, currentMonth, currentYear])
-
-  useEffect(() => {
-    if (!isAdmin && currentUser?.id) {
-      setSelectedEmployeeId(currentUser.id)
-    }
-  }, [isAdmin, currentUser?.id])
 
   const years = useMemo(() => {
     const current = new Date().getFullYear()

@@ -404,10 +404,6 @@ export default function CashClosingPage() {
       .select("*")
       .eq("owner_admin_id", currentUser?.adminId || currentUser?.id || "__no_tenant__")
 
-    if (currentUser?.role !== "admin" && currentUser?.role !== "super_admin") {
-      closingsQuery = closingsQuery.eq("cashier_id", currentUser?.id || "__no_user__")
-    }
-
     const { data: closingsData } = await closingsQuery
       .order("date", { ascending: false })
       .limit(30)
@@ -488,10 +484,6 @@ export default function CashClosingPage() {
         .from("cash_closings")
         .select("*")
         .eq("owner_admin_id", currentUser?.adminId || currentUser?.id || "__no_tenant__")
-
-      if (currentUser?.role !== "admin" && currentUser?.role !== "super_admin") {
-        closingsQuery = closingsQuery.eq("cashier_id", currentUser?.id || "__no_user__")
-      }
 
       const { data: closingsData } = await closingsQuery
         .order("date", { ascending: false })
