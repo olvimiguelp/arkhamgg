@@ -41,6 +41,7 @@ import {
   sortSalesByRecencyDesc,
 } from "@/lib/credit-sale-utils"
 import { Checkbox } from "@/components/ui/checkbox"
+import { useHideOutOfStock } from "@/hooks/use-hide-out-of-stock"
 import { useLocation } from "react-router-dom"
 
 
@@ -144,6 +145,7 @@ const INITIAL_NEW_ALMACEN_CUSTOMER_FORM: NewAlmacenCustomerForm = {
 }
 
 export default function SalesPage() {
+  const { hideOutOfStock } = useHideOutOfStock()
   const navigate = useNavigate()
   const location = useLocation()
   const isWholesalePage = location.pathname.startsWith("/ventas-por-mayor")
@@ -1510,6 +1512,7 @@ export default function SalesPage() {
     if (exactIdToken) {
       const exactIdMatches = searchableVisibleProducts
         .filter((item) => {
+          if (hideOutOfStock && item.product.stock <= 0) return false
           const idCandidates = [
             item.normalizedSku,
             item.normalizedFormattedSku,
@@ -1528,6 +1531,7 @@ export default function SalesPage() {
 
     const filtered = searchableVisibleProducts
       .filter((item) => {
+      if (hideOutOfStock && item.product.stock <= 0) return false
       if (showAlmacenProductsOnly) {
         if (almacenCategoryFilter !== "all" && item.categoryValue !== almacenCategoryFilter) return false
         if (almacenBoxFilter !== "all" && item.boxValue !== almacenBoxFilter) return false
@@ -1564,6 +1568,7 @@ export default function SalesPage() {
   }, [
     almacenBoxFilter,
     almacenCategoryFilter,
+    hideOutOfStock,
     matchesGeneralSearchToken,
     matchesSearchToken,
     searchableVisibleProducts,

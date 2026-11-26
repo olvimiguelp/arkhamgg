@@ -21,6 +21,8 @@ import {
   Share2,
   Copy,
   ImageDown,
+  Eye,
+  EyeOff,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -55,6 +57,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getTenantBranding } from "@/lib/tenant-branding"
 import { getPublicCatalogUrl } from "@/lib/public-catalog-url"
 import { getOrCreatePublicCatalogShare } from "@/lib/public-catalog-share"
+import { useHideOutOfStock } from "@/hooks/use-hide-out-of-stock"
 
 // Reusing the Product interface and Store logic since it's the same data source
 // In a real app, this might be a distinct view or filter of the inventory
@@ -125,6 +128,7 @@ const normalizeProductSku = (value: string) => {
 }
 
 export default function ProductsPage() {
+  const { hideOutOfStock, toggleHideOutOfStock } = useHideOutOfStock()
   const { products, suppliers, addProduct, updateProduct, deleteProduct, setOnDialogOpen, employees, currentUser, sales } = useStore()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
@@ -207,6 +211,7 @@ export default function ProductsPage() {
     setIsCreatingPublicCatalog(true)
     try {
       const productIds = catalogProducts
+        .filter((product) => !hideOutOfStock || product.stock > 0)
         .map((product) => String((product as Product & { sourceId?: string }).sourceId || product.id).replace(/^products::/, ""))
         .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))
       const token = await getOrCreatePublicCatalogShare({
@@ -628,6 +633,7 @@ export default function ProductsPage() {
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase()
   const filteredProducts = catalogProducts
+    .filter((product) => !hideOutOfStock || product.stock > 0)
     .filter(
       (product) =>
         product.name.toLowerCase().includes(normalizedSearchTerm) ||
@@ -864,7 +870,9 @@ export default function ProductsPage() {
       const { default: jsPDF } = await import("jspdf")
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
       const generatedAt = new Date()
-      const productsToExport = [...catalogProducts].sort((a, b) => a.name.localeCompare(b.name))
+      const productsToExport = [...catalogProducts]
+        .filter((product) => !hideOutOfStock || product.stock > 0)
+        .sort((a, b) => a.name.localeCompare(b.name))
       const blobToDataUrl = (blob: Blob) =>
         new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
@@ -1295,6 +1303,10 @@ export default function ProductsPage() {
             </div>
           </PopoverContent>
         </Popover>
+        <Button variant={hideOutOfStock ? "default" : "outline"} onClick={toggleHideOutOfStock} className="w-full min-h-11 sm:w-auto">
+          {hideOutOfStock ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+          {hideOutOfStock ? "Mostrar sin stock en ventas y catálogo" : "Ocultar sin stock en ventas y catálogo"}
+        </Button>
         <Button variant="outline" onClick={() => setIsCatalogDialogOpen(true)} className="w-full min-h-11 sm:w-auto">
           <PackagePlus className="mr-2 h-4 w-4" />
           Catálogo

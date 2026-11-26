@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Boxes,
   Eye,
+  EyeOff,
   Edit,
   FileDown,
   FileText,
@@ -54,6 +55,7 @@ import {
   normalizeAlmacenBoxNumber,
 } from "@/lib/almacen"
 import { normalizeInventorySourceTable, sameSaleItemSource } from "@/lib/transaction-classification"
+import { useHideOutOfStock } from "@/hooks/use-hide-out-of-stock"
 import {
   deleteProductImageFromStorage,
   isProductImagePairOptimized,
@@ -149,6 +151,7 @@ const getSaleInvoiceName = (sale: Pick<Sale, "items">) => {
 }
 
 export default function AlmacenPage() {
+  const { hideOutOfStock, toggleHideOutOfStock } = useHideOutOfStock()
   const { products, sales, suppliers, addProduct, updateProduct, deleteProduct, loadMoreProducts, setOnDialogOpen, employees, currentUser } = useStore()
   const { toast } = useToast()
 
@@ -1175,6 +1178,11 @@ export default function AlmacenPage() {
               ))}
             </SelectContent>
           </Select>
+
+          <Button variant={hideOutOfStock ? "default" : "outline"} className="w-full min-h-11 sm:w-auto" onClick={toggleHideOutOfStock}>
+            {hideOutOfStock ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+            {hideOutOfStock ? "Mostrar sin stock en ventas y catálogo" : "Ocultar sin stock en ventas y catálogo"}
+          </Button>
 
           {searchTerm.trim() && (
             <Button variant="outline" className="w-full min-h-11 sm:w-auto" onClick={() => setSearchTerm("")}>Limpiar busqueda</Button>
